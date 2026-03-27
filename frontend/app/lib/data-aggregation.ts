@@ -58,7 +58,7 @@ export interface EventTimelineItem {
 function monitoringStatusToRoomState(
   status: MonitoringStatus
 ): AggregatedRoomData['status'] {
-  if (!status.is_active) return 'offline';
+  if (!status.is_running) return 'offline';
 
   const event = status.last_event;
   if (!event) return 'offline';
@@ -89,7 +89,7 @@ export function aggregateRoomData(
       room_state: event?.room_state || null,
       energy_wasted_kwh: event?.energy_saved_kwh || 0,
       last_updated: event?.timestamp || new Date().toISOString(),
-      is_monitored: status.is_active,
+      is_monitored: status.is_running,
       appliances: event?.appliances.map(a => ({
         name: a.name,
         state: a.state.toLowerCase() as 'on' | 'off' | 'unknown',

@@ -1,4 +1,4 @@
-// File: D:\Hackathons\Frosthacks26\Watt_Watch\frontend\app\dashboard\page.tsx
+// File: D:\FROSTHACKS2.0\Watt_Watch\frontend\app\dashboard\page.tsx
 import * as entry from '../../../../app/dashboard/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
