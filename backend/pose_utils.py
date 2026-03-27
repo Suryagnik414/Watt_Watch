@@ -54,16 +54,22 @@ def draw_skeleton_on_image(
             conf1 = pt1_kpt.get("confidence", 0)
             conf2 = pt2_kpt.get("confidence", 0)
 
+            # Check confidence and validate coordinates are not at (0,0)
             if conf1 > confidence_threshold and conf2 > confidence_threshold:
-                pt1 = (int(pt1_kpt["x"]), int(pt1_kpt["y"]))
-                pt2 = (int(pt2_kpt["x"]), int(pt2_kpt["y"]))
-                cv2.line(image, pt1, pt2, SKELETON_COLOR, SKELETON_LINE_THICKNESS)
+                x1, y1 = int(pt1_kpt["x"]), int(pt1_kpt["y"])
+                x2, y2 = int(pt2_kpt["x"]), int(pt2_kpt["y"])
+
+                # Skip if either keypoint is at (0,0) - indicates undetected keypoint
+                if (x1 > 0 or y1 > 0) and (x2 > 0 or y2 > 0):
+                    cv2.line(image, (x1, y1), (x2, y2), SKELETON_COLOR, SKELETON_LINE_THICKNESS)
 
     # Draw joints (keypoints)
     for kpt in keypoints:
         if kpt.get("confidence", 0) > confidence_threshold:
-            pt = (int(kpt["x"]), int(kpt["y"]))
-            cv2.circle(image, pt, JOINT_RADIUS, JOINT_COLOR, -1)
+            x, y = int(kpt["x"]), int(kpt["y"])
+            # Skip if keypoint is at (0,0) - indicates undetected keypoint
+            if x > 0 or y > 0:
+                cv2.circle(image, (x, y), JOINT_RADIUS, JOINT_COLOR, -1)
 
     return image
 

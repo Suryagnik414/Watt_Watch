@@ -1,0 +1,98 @@
+{
+  "total_tests": 15,
+  "passed": 14,
+  "failed": 1,
+  "success_rate": 0.9333333333333333,
+  "tests": [
+    {
+      "name": "PHASE0_Schema_Validation",
+      "success": true,
+      "message": "Schema validation successful",
+      "timestamp": "2026-03-27T00:38:12.333383"
+    },
+    {
+      "name": "PHASE0_State_Machine",
+      "success": true,
+      "message": "State machine logic passed for all test cases",
+      "timestamp": "2026-03-27T00:38:12.333669"
+    },
+    {
+      "name": "PHASE0_Energy_Calculation",
+      "success": true,
+      "message": "Energy calculation: expected 0.2, got 0.2",
+      "timestamp": "2026-03-27T00:38:12.334160"
+    },
+    {
+      "name": "PHASE0_Event_Serialization",
+      "success": true,
+      "message": "Event serialization round-trip successful",
+      "timestamp": "2026-03-27T00:38:12.334761"
+    },
+    {
+      "name": "PHASE1_Camera_Config",
+      "success": true,
+      "message": "Camera configuration validation successful",
+      "timestamp": "2026-03-27T00:38:12.335340"
+    },
+    {
+      "name": "PHASE1_State_Tracker",
+      "success": true,
+      "message": "State tracking: EMPTY_WASTING\u2192EMPTY_WASTING, duration: 60s",
+      "timestamp": "2026-03-27T00:38:12.335498"
+    },
+    {
+      "name": "PHASE1_Synthetic_Monitoring",
+      "success": true,
+      "message": "Synthetic frame monitoring test successful",
+      "timestamp": "2026-03-27T00:38:12.336193"
+    },
+    {
+      "name": "PHASE2_Privacy_Mode_Event",
+      "success": true,
+      "message": "Privacy mode event creation successful",
+      "timestamp": "2026-03-27T00:38:12.337961"
+    },
+    {
+      "name": "PHASE2_Data_Minimization",
+      "success": true,
+      "message": "Data minimization: no PII=True, has required=True",
+      "timestamp": "2026-03-27T00:38:12.339805"
+    },
+    {
+      "name": "PHASE2_PII_Prevention",
+      "success": true,
+      "message": "Schema PII prevention: 6 PII field types checked",
+      "timestamp": "2026-03-27T00:38:12.340594"
+    },
+    {
+      "name": "PHASE3_Event_Logging",
+      "success": true,
+      "message": "Event logging: 1 events logged",
+      "timestamp": "2026-03-27T00:38:12.358997"
+    },
+    {
+      "name": "PHASE3_Event_Replay",
+      "success": true,
+      "message": "Event replay: 1 events replayed",
+      "timestamp": "2026-03-27T00:38:12.412175"
+    },
+    {
+      "name": "PHASE3_Cloud_Simulation",
+      "success": false,
+      "message": "Cloud simulation test failed: 'str' object has no attribute 'isoformat'",
+      "timestamp": "2026-03-27T00:38:12.413523"
+    },
+    {
+      "name": "INTEGRATION_Full_Pipeline",
+      "success": true,
+      "message": "Pipeline: log=True, replay=True, state=True",
+      "timestamp": "2026-03-27T00:38:12.441900"
+    },
+    {
+      "name": "INTEGRATION_API_Endpoints",
+      "success": true,
+      "message": "API server available",
+      "timestamp": "2026-03-27T00:38:14.513258"
+    }
+  ]
+}

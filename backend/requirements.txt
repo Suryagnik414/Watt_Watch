@@ -8,3 +8,5 @@ numpy==2.2.3
 pillow==11.1.0
 opencv-python==4.10.0.84
 pyyaml==6.0.1
+torch>=2.0.0
+torchvision>=0.15.0
