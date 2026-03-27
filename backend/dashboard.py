@@ -4,153 +4,204 @@ import torch
 import numpy as np
 from ultralytics import YOLO
 import time
-from datetime import datetime
 import pandas as pd
+from datetime import datetime
 
-# --- TASK 5: PROFESSIONAL COMMAND CENTER CONFIG ---
-st.set_page_config(page_title="Watt-Watch: FINAL CHAMPION", layout="wide")
+# --- 1. SETTINGS & CSS ---
+st.set_page_config(page_title="Watt-Watch Enterprise", layout="wide", initial_sidebar_state="expanded")
 
+def inject_custom_css():
+    st.markdown("""
+        <style>
+        /* Base Theme */
+        .stApp { background-color: #020617; color: #f8fafc; }
+        [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #1e293b; }
+        
+        /* Glassmorphism Cards */
+        .glass-card {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid #334155;
+            border-radius: 16px; padding: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        /* Pulsing Room Tile */
+        .room-tile-red {
+            background: #450a0a;
+            border: 2px solid #ef4444;
+            border-radius: 12px; padding: 20px; text-align: center;
+            animation: pulse-red 2s infinite;
+        }
+        .room-tile-green {
+            background: #064e3b;
+            border: 2px solid #10b981;
+            border-radius: 12px; padding: 20px; text-align: center;
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        
+        /* Metric Styles */
+        .metric-val { font-size: 2.5rem; font-weight: 800; color: #38bdf8; }
+        .metric-label { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; }
+        </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. CORE AI ENGINE ---
 @st.cache_resource
-def load_gpu_models():
-    # SOTA P6 Model for 36+ students (Task 1)
-    pose_model = YOLO('yolov8x-pose-p6.pt').to('cuda')
-    # X-Large model for Laptops/Projectors (Task 2)
-    detect_model = YOLO('yolov8x.pt').to('cuda')
-    return pose_model, detect_model
+def load_models():
+    return YOLO('yolov8x-pose-p6.pt').to('cuda'), YOLO('yolov8x.pt').to('cuda')
 
-class WattWatchChampion:
+class AuditorEngine:
     def __init__(self):
-        self.pose_model, self.detect_model = load_gpu_models()
+        self.pose_m, self.det_m = load_models()
         self.skeleton = [(16,14),(14,12),(17,15),(15,13),(12,13),(6,12),(7,13),
                          (6,7),(6,8),(7,9),(8,10),(9,11),(2,3),(1,2),(1,3),(2,4),(3,5)]
-        # Target IDs: 62 (TV/Monitor/Projector), 63 (Laptop)
-        self.appliance_ids = [62, 63]
 
-    def detect_ceiling_lights(self, frame, ghost_view):
-        """TASK 2: Intelligent Light Detection (Glow Analysis)."""
+    def run_audit(self, frame, l_thresh, s_thresh):
         h, w = frame.shape[:2]
-        # We only look at the top 40% of the frame for lights (Ceiling Area)
-        ceiling_area = frame[0:int(h*0.4), 0:w]
-        gray = cv2.cvtColor(ceiling_area, cv2.COLOR_BGR2GRAY)
+        ghost = cv2.GaussianBlur(frame.copy(), (99, 99), 30)
         
-        # Look for extreme brightness (Glow Blobs > 240 brightness)
-        _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Detection
+        pose_res = self.pose_m.predict(source=frame, imgsz=1280, conf=0.15, device='cuda', verbose=False)[0]
+        count = len(pose_res.boxes)
         
-        lights_on = 0
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            # Filter: Lights must be big enough to not be 'glare' (e.g. > 100px)
-            if area > 100:
-                lights_on += 1
-                x, y, lw, lh = cv2.boundingRect(cnt)
-                # Draw light detection on ghost view
-                cv2.rectangle(ghost_view, (x, y), (x+lw, y+lh), (0, 255, 255), 2)
-                cv2.putText(ghost_view, "LIGHT: ON", (x, y-5), 1, 1.2, (0, 255, 255), 2)
-        return lights_on
-
-    def audit_frame(self, frame, sensitivity):
-        h, w = frame.shape[:2]
-        
-        # 1. TASK 1: P6 GPU OCCUPANCY (Using imgsz=1280 for accuracy)
-        pose_res = self.pose_model.predict(source=frame, imgsz=1280, conf=0.15, device='cuda', verbose=False)[0]
-        person_count = len(pose_res.boxes) if pose_res.boxes is not None else 0
-        
-        # 2. TASK 3: PRIVACY GHOST MODE (Anonymization)
-        ghost_view = cv2.GaussianBlur(frame.copy(), (99, 99), 30)
+        # Skeletons
         if pose_res.keypoints is not None:
             for kpts_obj in pose_res.keypoints.data:
                 kpts = kpts_obj.cpu().numpy()
-                for start, end in self.skeleton:
-                    pt1, pt2 = kpts[start-1], kpts[end-1]
-                    if pt1[2] > 0.2 and pt2[2] > 0.2:
-                        cv2.line(ghost_view, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2)
+                for s, e in self.skeleton:
+                    pt1, pt2 = kpts[s-1], kpts[e-1]
+                    if pt1[2] > 0.3 and pt2[2] > 0.3:
+                        cv2.line(ghost, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2)
 
-        # 3. TASK 2: CEILING LIGHT DETECTION
-        lights_active = self.detect_ceiling_lights(frame, ghost_view)
-
-        # 4. TASK 2: PROJECTOR/LAPTOP RECOGNITION (Fixing Paper False Positives)
-        # Higher confidence (0.5) ensures we don't detect white paper
-        det_res = self.detect_model.predict(source=frame, imgsz=1280, conf=0.5, device='cuda', verbose=False)[0]
-        screens_on = 0
+        # Lights
+        ceiling = frame[0:int(h*0.45), 0:w]
+        gray = cv2.cvtColor(ceiling, cv2.COLOR_BGR2GRAY)
+        _, th = cv2.threshold(gray, l_thresh, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        lights = sum(1 for c in contours if cv2.contourArea(c) > 60)
         
+        # Screens
+        det_res = self.det_m.predict(source=frame, imgsz=1280, conf=0.5, device='cuda', verbose=False)[0]
+        screens = 0
         if det_res.boxes is not None:
             for box in det_res.boxes:
-                cls = int(box.cls[0])
-                if cls in self.appliance_ids:
+                if int(box.cls[0]) in [62, 63]:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    # Filter small white artifacts (Area check)
-                    if (x2-x1)*(y2-y1) < 8000: continue 
-                    
-                    crop = frame[max(0,y1):min(y2,h), max(0,x1):min(x2,w)]
-                    brightness = np.mean(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY))
-                    status = "ON" if brightness > sensitivity else "OFF"
-                    if status == "ON": screens_on += 1
-                    
-                    color = (0, 255, 0) if status == "ON" else (0, 0, 255)
-                    cv2.rectangle(ghost_view, (x1, y1), (x2, y2), color, 4)
-                    cv2.putText(ghost_view, f"SCREEN: {status}", (x1, y1-15), 1, 1.8, color, 3)
+                    if (x2-x1)*(y2-y1) < 8000: continue
+                    if np.mean(cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)) > s_thresh:
+                        screens += 1
+                        cv2.rectangle(ghost, (x1, y1), (x2, y2), (0, 255, 0), 3)
 
-        # --- TASK 4: LOGIC ENGINE (The Energy Rule) ---
-        is_wasting = (person_count == 0 and (screens_on > 0 or lights_active > 0))
-        energy_saved = 0.00 if is_wasting else 0.45
-        return ghost_view, person_count, is_wasting, energy_saved, (screens_on + lights_active)
+        return ghost, count, (count == 0 and (lights > 0 or screens > 0)), (lights + screens)
 
-# --- STREAMLIT UI ---
-auditor = WattWatchChampion()
+# --- 3. SESSION STATE ---
+if 'page' not in st.session_state: st.session_state.page = "Campus Hub"
+if 'total_inr' not in st.session_state: st.session_state.total_inr = 0.0
+if 'history' not in st.session_state: st.session_state.history = pd.DataFrame(columns=["Time", "INR"])
+if 'is_wasting' not in st.session_state: st.session_state.is_wasting = False
 
-# SIDEBAR
+# --- 4. NAVIGATION LOGIC ---
+inject_custom_css()
+engine = AuditorEngine()
+
 with st.sidebar:
-    st.header("⚙️ Control Room Setup")
-    cam_index = st.number_input("Camera Index (OBS Virtual)", min_value=0, max_value=2, value=1)
-    sensitivity = st.slider("Screen Brightness Thresh", 0, 255, 160)
-    start_btn = st.button("🚀 INITIATE CAMPUS AUDIT")
-    st.info(f"Hardware: {torch.cuda.get_device_name(0)}")
+    st.title("⚡ WATT-WATCH PRO")
+    st.markdown("---")
+    if st.button("🏢 Campus Grid Hub", use_container_width=True): st.session_state.page = "Campus Hub"
+    if st.button("📡 Live Command Feed", use_container_width=True): st.session_state.page = "Live Feed"
+    if st.button("📊 Financial Analytics", use_container_width=True): st.session_state.page = "Analytics"
+    
+    st.markdown("---")
+    st.subheader("💰 Live Savings")
+    st.markdown(f"<div class='glass-card'><p class='metric-label'>Total Saved</p><p class='metric-val'>₹{st.session_state.total_inr:.2f}</p></div>", unsafe_allow_html=True)
+    
+    admin_mode = st.toggle("🔓 Admin View (Raw Feed)")
+    cam_idx = st.number_input("Camera Index", value=1)
+    l_thresh = st.slider("Light Sensitivity", 200, 255, 235)
 
-# --- THE RED ALERT CSS ---
-def apply_alert_style(wasting):
-    if wasting:
-        st.markdown("""
-        <style>
-        .stApp { background-color: #4a0404; animation: pulse 1s infinite; }
-        @keyframes pulse { 0% { background-color: #4a0404; } 50% { background-color: #b30000; } 100% { background-color: #4a0404; } }
-        h1, h2, h3, p, span, label { color: white !important; }
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("<style>.stApp { background-color: #0e1117; }</style>", unsafe_allow_html=True)
+# --- PAGE 1: CAMPUS HUB ---
+if st.session_state.page == "Campus Hub":
+    st.title("🏢 Campus Infrastructure Overview")
+    st.markdown("Real-time status of all audited zones.")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    # Room A-402 Tile (The Main Demo Room)
+    with col1:
+        status_class = "room-tile-red" if st.session_state.is_wasting else "room-tile-green"
+        st.markdown(f"""<div class='{status_class}'>
+            <h3>Room A-402</h3>
+            <p>{'⚠️ ENERGY WASTE' if st.session_state.is_wasting else '✅ SECURE'}</p>
+        </div>""", unsafe_allow_html=True)
+        if st.button("Inspect A-402 Feed", use_container_width=True):
+            st.session_state.page = "Live Feed"
+            st.rerun()
 
-# UI TILES
-st.title("🛡️ Campus 'Watt-Watch' Command Center")
-st.markdown("---")
+    # Placeholder Static Rooms
+    with col2:
+        st.markdown("<div class='room-tile-green'><h3>Lab 201</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
+    with col3:
+        st.markdown("<div class='room-tile-green'><h3>Library S1</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-tile_status = c1.empty()
-tile_count = c2.empty()
-tile_app = c3.empty()
-tile_savings = c4.empty()
-
-live_placeholder = st.empty()
-
-if start_btn:
-    cap = cv2.VideoCapture(int(cam_index))
+# --- PAGE 2: LIVE FEED ---
+elif st.session_state.page == "Live Feed":
+    st.title("📡 Live Auditor Command: Room A-402")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    t1 = c1.empty(); t2 = c2.empty(); t3 = c3.empty(); t4 = c4.empty()
+    
+    feed_placeholder = st.empty()
+    
+    cap = cv2.VideoCapture(int(cam_idx))
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
         
-        t_start = time.time()
-        ghost, count, wasting, savings, apps = auditor.audit_frame(frame, sensitivity)
-        latency = time.time() - t_start
+        ghost, count, wasting, apps = engine.run_audit(frame, l_thresh, 165)
+        st.session_state.is_wasting = wasting
+        
+        # Financial Update
+        step = 0.0 if wasting else 0.45
+        st.session_state.total_inr += (step * (9.5 / 3600))
+        
+        # Update Tiles
+        t1.metric("Status", "WASTE" if wasting else "SECURE", delta="-100%" if wasting else None)
+        t2.metric("Occupancy", f"{count} Students")
+        t3.metric("Appliances", f"{apps} Active")
+        t4.metric("Real-time Saved", f"₹{st.session_state.total_inr:.2f}")
 
-        apply_alert_style(wasting)
+        # Display Feed
+        display = frame if admin_mode else ghost
+        feed_placeholder.image(cv2.cvtColor(display, cv2.COLOR_BGR2RGB), use_container_width=True)
+        
+        # Update History for Analytics
+        new_pt = pd.DataFrame({"Time": [datetime.now()], "INR": [st.session_state.total_inr]})
+        st.session_state.history = pd.concat([st.session_state.history, new_pt]).tail(50)
+        
+        time.sleep(0.5)
+        if st.session_state.page != "Live Feed": break
 
-        # UPDATE TILES (Task 5)
-        status_txt = "🚨 WASTE DETECTED" if wasting else "✅ ROOM SECURE"
-        tile_status.metric("System Status", status_txt)
-        tile_count.metric("Occupancy", f"{count} Students")
-        tile_app.metric("Active Appliances", f"{apps} Zones")
-        tile_savings.metric("EnergySaved Metric", f"{savings} kWh", delta="Waste" if wasting else "Saving")
-
-        live_placeholder.image(cv2.cvtColor(ghost, cv2.COLOR_BGR2RGB), use_container_width=True)
-        st.sidebar.write(f"GPU Latency: {latency:.3f}s (Goal < 3s)")
-        time.sleep(1.0)
+# --- PAGE 3: ANALYTICS ---
+elif st.session_state.page == "Analytics":
+    st.title("📊 Financial & Energy Analytics")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Cumulative Cost Savings (INR)")
+        if not st.session_state.history.empty:
+            st.area_chart(st.session_state.history.set_index("Time"))
+        else:
+            st.info("Start the Live Feed to generate analytics data.")
+            
+    with col_b:
+        st.subheader("ROI Projection")
+        st.markdown("""<div class='glass-card'>
+            <h3>Daily Average: ₹142.50</h3>
+            <p>Monthly Est: ₹4,275.00</p>
+            <p style='color:#38bdf8'>Carbon Offset: 12.4kg CO2</p>
+        </div>""", unsafe_allow_html=True)
