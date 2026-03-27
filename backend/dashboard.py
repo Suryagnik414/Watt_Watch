@@ -7,52 +7,45 @@ import time
 import pandas as pd
 from datetime import datetime
 
-# --- 1. SETTINGS & CSS ---
-st.set_page_config(page_title="Watt-Watch Enterprise", layout="wide", initial_sidebar_state="expanded")
+# --- 1. ENTERPRISE UI & CSS CONFIG ---
+st.set_page_config(page_title="Watt-Watch Enterprise Elite", layout="wide", initial_sidebar_state="expanded")
 
-def inject_custom_css():
-    st.markdown("""
+def inject_enterprise_css(wasting):
+    base_bg = "#020617" if not wasting else "#1a0505"
+    border_color = "#38bdf8" if not wasting else "#ef4444"
+    animation = "pulse-red 1.5s infinite" if wasting else "none"
+
+    st.markdown(f"""
         <style>
-        /* Base Theme */
-        .stApp { background-color: #020617; color: #f8fafc; }
-        [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #1e293b; }
+        .stApp {{ background-color: {base_bg}; color: #f1f5f9; transition: all 0.5s; }}
+        [data-testid="stSidebar"] {{ background-color: #0f172a; border-right: 1px solid #1e293b; }}
         
-        /* Glassmorphism Cards */
-        .glass-card {
-            background: rgba(30, 41, 59, 0.7);
-            border: 1px solid #334155;
-            border-radius: 16px; padding: 24px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        /* Pulsing Room Tile */
-        .room-tile-red {
-            background: #450a0a;
-            border: 2px solid #ef4444;
+        .metric-card {{
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid {border_color};
             border-radius: 12px; padding: 20px; text-align: center;
-            animation: pulse-red 2s infinite;
-        }
-        .room-tile-green {
-            background: #064e3b;
-            border: 2px solid #10b981;
-            border-radius: 12px; padding: 20px; text-align: center;
-        }
-        @keyframes pulse-red {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
+            box-shadow: 0 0 20px {border_color}22;
+        }}
         
-        /* Metric Styles */
-        .metric-val { font-size: 2.5rem; font-weight: 800; color: #38bdf8; }
-        .metric-label { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; }
+        .room-tile {{
+            border-radius: 16px; padding: 40px; text-align: center;
+            transition: 0.3s; cursor: pointer; border: 2px solid; margin-bottom: 20px;
+        }}
+        .tile-secure {{ background: #064e3b; border-color: #10b981; color: white; }}
+        .tile-waste {{ background: #450a0a; border-color: #ef4444; color: white; animation: {animation}; }}
+        
+        @keyframes pulse-red {{
+            0% {{ box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }}
+            70% {{ box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }}
+            100% {{ box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }}
+        }}
         </style>
     """, unsafe_allow_html=True)
 
-# --- 2. CORE AI ENGINE ---
+# --- 2. THE AI AUDIT ENGINE ---
 @st.cache_resource
 def load_models():
+    # P6 for 36+ student count | X for high-precision appliance detection
     return YOLO('yolov8x-pose-p6.pt').to('cuda'), YOLO('yolov8x.pt').to('cuda')
 
 class AuditorEngine:
@@ -61,100 +54,119 @@ class AuditorEngine:
         self.skeleton = [(16,14),(14,12),(17,15),(15,13),(12,13),(6,12),(7,13),
                          (6,7),(6,8),(7,9),(8,10),(9,11),(2,3),(1,2),(1,3),(2,4),(3,5)]
 
-    def run_audit(self, frame, l_thresh, s_thresh):
+    def process_raw_audit(self, frame, l_thresh, s_thresh):
+        """AI TRACKS EVERYTHING ON RAW FEED INTERNALLY."""
         h, w = frame.shape[:2]
-        ghost = cv2.GaussianBlur(frame.copy(), (99, 99), 30)
+        raw_annotated = frame.copy()
         
-        # Detection
-        pose_res = self.pose_m.predict(source=frame, imgsz=1280, conf=0.15, device='cuda', verbose=False)[0]
-        count = len(pose_res.boxes)
-        
-        # Skeletons
-        if pose_res.keypoints is not None:
-            for kpts_obj in pose_res.keypoints.data:
-                kpts = kpts_obj.cpu().numpy()
-                for s, e in self.skeleton:
-                    pt1, pt2 = kpts[s-1], kpts[e-1]
-                    if pt1[2] > 0.3 and pt2[2] > 0.3:
-                        cv2.line(ghost, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2)
-
-        # Lights
+        # A. LIGHT TRACKING (RAW)
         ceiling = frame[0:int(h*0.45), 0:w]
         gray = cv2.cvtColor(ceiling, cv2.COLOR_BGR2GRAY)
         _, th = cv2.threshold(gray, l_thresh, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        lights = sum(1 for c in contours if cv2.contourArea(c) > 60)
         
-        # Screens
+        light_count = 0
+        light_boxes = []
+        for cnt in contours:
+            if cv2.contourArea(cnt) > 45:
+                light_count += 1
+                light_boxes.append(cv2.boundingRect(cnt))
+
+        # B. HUMAN OCCUPANCY (RAW)
+        pose_res = self.pose_m.predict(source=frame, imgsz=1280, conf=0.15, device='cuda', verbose=False)[0]
+        person_count = len(pose_res.boxes)
+
+        # C. APPLIANCE TRACKING (RAW)
         det_res = self.det_m.predict(source=frame, imgsz=1280, conf=0.5, device='cuda', verbose=False)[0]
-        screens = 0
+        screen_count = 0
+        screen_boxes = []
         if det_res.boxes is not None:
             for box in det_res.boxes:
-                if int(box.cls[0]) in [62, 63]:
+                if int(box.cls[0]) in [62, 63]: # TV/Monitor, Laptop
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    if (x2-x1)*(y2-y1) < 8000: continue
+                    if (x2-x1)*(y2-y1) < 8000: continue # Paper filter
                     if np.mean(cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)) > s_thresh:
-                        screens += 1
-                        cv2.rectangle(ghost, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                        screen_count += 1
+                        screen_boxes.append((x1, y1, x2, y2))
 
-        return ghost, count, (count == 0 and (lights > 0 or screens > 0)), (lights + screens)
+        # D. GENERATE TWO VIEWS (Admin vs Ghost)
+        ghost_view = cv2.GaussianBlur(frame.copy(), (99, 99), 30)
+        admin_view = frame.copy()
 
-# --- 3. SESSION STATE ---
-if 'page' not in st.session_state: st.session_state.page = "Campus Hub"
+        def draw_annotations(target_img):
+            # Draw Skeletons
+            if pose_res.keypoints is not None:
+                for kpts_obj in pose_res.keypoints.data:
+                    kpts = kpts_obj.cpu().numpy()
+                    for s, e in self.skeleton:
+                        pt1, pt2 = kpts[s-1], kpts[end-1] if 'end' in locals() else kpts[e-1]
+                        if pt1[2] > 0.3 and pt2[2] > 0.3:
+                            cv2.line(target_img, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2)
+            # Draw Lights
+            for (lx, ly, lw, lh) in light_boxes:
+                cv2.rectangle(target_img, (lx, ly), (lx+lw, ly+lh), (0, 255, 255), 3)
+                cv2.putText(target_img, "LIGHT: ON", (lx, ly-10), 1, 1.2, (0, 255, 255), 2)
+            # Draw Screens
+            for (x1, y1, x2, y2) in screen_boxes:
+                cv2.rectangle(target_img, (x1, y1), (x2, y2), (0, 255, 0), 4)
+                cv2.putText(target_img, "SCREEN: ACTIVE", (x1, y1-15), 1, 1.5, (0, 255, 0), 2)
+            return target_img
+
+        final_admin = draw_annotations(admin_view)
+        final_ghost = draw_annotations(ghost_view)
+        
+        is_wasting = (person_count == 0 and (light_count > 0 or screen_count > 0))
+        return final_admin, final_ghost, person_count, is_wasting, (light_count + screen_count)
+
+# --- 3. DASHBOARD STATE & NAVIGATION ---
+if 'page' not in st.session_state: st.session_state.page = "Campus Grid"
 if 'total_inr' not in st.session_state: st.session_state.total_inr = 0.0
 if 'history' not in st.session_state: st.session_state.history = pd.DataFrame(columns=["Time", "INR"])
-if 'is_wasting' not in st.session_state: st.session_state.is_wasting = False
+if 'wasting' not in st.session_state: st.session_state.wasting = False
 
-# --- 4. NAVIGATION LOGIC ---
-inject_custom_css()
+# --- 4. SIDEBAR COMMANDS ---
 engine = AuditorEngine()
-
 with st.sidebar:
-    st.title("⚡ WATT-WATCH PRO")
+    st.title("⚡ WATT-WATCH ELITE")
     st.markdown("---")
-    if st.button("🏢 Campus Grid Hub", use_container_width=True): st.session_state.page = "Campus Hub"
+    if st.button("🏢 Campus Overview Hub", use_container_width=True): st.session_state.page = "Campus Grid"
     if st.button("📡 Live Command Feed", use_container_width=True): st.session_state.page = "Live Feed"
     if st.button("📊 Financial Analytics", use_container_width=True): st.session_state.page = "Analytics"
     
     st.markdown("---")
-    st.subheader("💰 Live Savings")
-    st.markdown(f"<div class='glass-card'><p class='metric-label'>Total Saved</p><p class='metric-val'>₹{st.session_state.total_inr:.2f}</p></div>", unsafe_allow_html=True)
+    st.subheader("💰 Live Statistics")
+    st.markdown(f"<div class='metric-card'><p style='color:#94a3b8; font-size:0.8rem;'>INR SAVED</p><h2 style='color:#38bdf8; margin:0;'>₹{st.session_state.total_inr:.2f}</h2></div>", unsafe_allow_html=True)
     
-    admin_mode = st.toggle("🔓 Admin View (Raw Feed)")
+    admin_mode = st.toggle("🔓 ADMIN ACCESS (Raw Feed)")
     cam_idx = st.number_input("Camera Index", value=1)
-    l_thresh = st.slider("Light Sensitivity", 200, 255, 235)
+    l_thresh = st.slider("Ceiling Light Thresh", 150, 255, 235)
+    st.info(f"Hardware Acceleration: {torch.cuda.get_device_name(0)}")
 
 # --- PAGE 1: CAMPUS HUB ---
-if st.session_state.page == "Campus Hub":
-    st.title("🏢 Campus Infrastructure Overview")
-    st.markdown("Real-time status of all audited zones.")
+if st.session_state.page == "Campus Grid":
+    inject_enterprise_css(st.session_state.wasting)
+    st.title("🏢 Campus Infrastructure Map")
     
-    col1, col2, col3 = st.columns(3)
-    
-    # Room A-402 Tile (The Main Demo Room)
-    with col1:
-        status_class = "room-tile-red" if st.session_state.is_wasting else "room-tile-green"
-        st.markdown(f"""<div class='{status_class}'>
-            <h3>Room A-402</h3>
-            <p>{'⚠️ ENERGY WASTE' if st.session_state.is_wasting else '✅ SECURE'}</p>
+    cols = st.columns(3)
+    # Room A-402 Tile
+    with cols[0]:
+        style = "tile-waste" if st.session_state.wasting else "tile-secure"
+        st.markdown(f"""<div class='room-tile {style}'>
+            <h3>ROOM A-402</h3>
+            <p>{'🚨 ENERGY WASTE' if st.session_state.wasting else '✅ SYSTEM SECURE'}</p>
         </div>""", unsafe_allow_html=True)
-        if st.button("Inspect A-402 Feed", use_container_width=True):
+        if st.button("OPEN COMMAND CENTER", use_container_width=True):
             st.session_state.page = "Live Feed"
             st.rerun()
 
-    # Placeholder Static Rooms
-    with col2:
-        st.markdown("<div class='room-tile-green'><h3>Lab 201</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
-    with col3:
-        st.markdown("<div class='room-tile-green'><h3>Library S1</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
+    with cols[1]: st.markdown("<div class='room-tile tile-secure'><h3>LAB 101</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
+    with cols[2]: st.markdown("<div class='room-tile tile-secure'><h3>LIBRARY B1</h3><p>✅ SECURE</p></div>", unsafe_allow_html=True)
 
 # --- PAGE 2: LIVE FEED ---
 elif st.session_state.page == "Live Feed":
     st.title("📡 Live Auditor Command: Room A-402")
-    
-    c1, c2, c3, c4 = st.columns(4)
-    t1 = c1.empty(); t2 = c2.empty(); t3 = c3.empty(); t4 = c4.empty()
-    
+    t1, t2, t3, t4 = st.columns(4)
+    tile1 = t1.empty(); tile2 = t2.empty(); tile3 = t3.empty(); tile4 = t4.empty()
     feed_placeholder = st.empty()
     
     cap = cv2.VideoCapture(int(cam_idx))
@@ -162,46 +174,41 @@ elif st.session_state.page == "Live Feed":
         ret, frame = cap.read()
         if not ret: break
         
-        ghost, count, wasting, apps = engine.run_audit(frame, l_thresh, 165)
-        st.session_state.is_wasting = wasting
+        # AUDIT RAW - Output both versions
+        admin_v, ghost_v, count, wasting, apps = engine.process_raw_audit(frame, l_thresh, 165)
+        st.session_state.wasting = wasting
+        inject_enterprise_css(wasting)
         
-        # Financial Update
-        step = 0.0 if wasting else 0.45
-        st.session_state.total_inr += (step * (9.5 / 3600))
+        # Financials
+        saving = 0.0 if wasting else 0.45
+        st.session_state.total_inr += (saving * (9.50 / 3600))
         
-        # Update Tiles
-        t1.metric("Status", "WASTE" if wasting else "SECURE", delta="-100%" if wasting else None)
-        t2.metric("Occupancy", f"{count} Students")
-        t3.metric("Appliances", f"{apps} Active")
-        t4.metric("Real-time Saved", f"₹{st.session_state.total_inr:.2f}")
+        # Tiles (Task 5 Metrics)
+        tile1.metric("Status", "WASTE" if wasting else "SECURE", delta="ALERT" if wasting else "OK")
+        tile2.metric("Students", f"{count}")
+        tile3.metric("Tracking", f"{apps} Sources")
+        tile4.metric("Savings", f"₹{st.session_state.total_inr:.2f}")
 
-        # Display Feed
-        display = frame if admin_mode else ghost
-        feed_placeholder.image(cv2.cvtColor(display, cv2.COLOR_BGR2RGB), use_container_width=True)
+        # Update Analytics
+        new_row = pd.DataFrame({"Time": [datetime.now()], "INR": [st.session_state.total_inr]})
+        st.session_state.history = pd.concat([st.session_state.history, new_row]).tail(30)
+
+        # Presentation View
+        final_out = admin_v if admin_mode else ghost_v
+        feed_placeholder.image(cv2.cvtColor(final_out, cv2.COLOR_BGR2RGB), use_container_width=True)
         
-        # Update History for Analytics
-        new_pt = pd.DataFrame({"Time": [datetime.now()], "INR": [st.session_state.total_inr]})
-        st.session_state.history = pd.concat([st.session_state.history, new_pt]).tail(50)
-        
-        time.sleep(0.5)
+        time.sleep(0.4)
         if st.session_state.page != "Live Feed": break
 
 # --- PAGE 3: ANALYTICS ---
 elif st.session_state.page == "Analytics":
-    st.title("📊 Financial & Energy Analytics")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("Cumulative Cost Savings (INR)")
+    inject_enterprise_css(False)
+    st.title("📊 Financial cost Savings Intelligence")
+    ca, cb = st.columns([2, 1])
+    with ca:
+        st.subheader("INR Savings Momentum")
         if not st.session_state.history.empty:
             st.area_chart(st.session_state.history.set_index("Time"))
-        else:
-            st.info("Start the Live Feed to generate analytics data.")
-            
-    with col_b:
-        st.subheader("ROI Projection")
-        st.markdown("""<div class='glass-card'>
-            <h3>Daily Average: ₹142.50</h3>
-            <p>Monthly Est: ₹4,275.00</p>
-            <p style='color:#38bdf8'>Carbon Offset: 12.4kg CO2</p>
-        </div>""", unsafe_allow_html=True)
+    with cb:
+        st.subheader("Total Savings")
+        st.markdown(f"<div class='metric-card'><h1 style='color:#10b981'>₹{st.session_state.total_inr:.2f}</h1><p>Carbon Saved: 14.2kg</p></div>", unsafe_allow_html=True)
