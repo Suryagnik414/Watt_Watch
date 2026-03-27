@@ -75,14 +75,18 @@ export async function getMonitoringStatus(
 export async function startMonitoring(
   roomId: string,
   cameraId: number = 0,
-  sampleInterval: number = 5,
-  privacyMode: boolean = false
-): Promise<{ message: string; room_id: string }> {
+  fps: number = 0.5,
+  resolutionWidth: number = 640,
+  resolutionHeight: number = 480,
+  saveFrames: boolean = false
+): Promise<{ message: string; room_id: string; status: string }> {
   const params = new URLSearchParams({
     room_id: roomId,
     camera_id: cameraId.toString(),
-    sample_interval_sec: sampleInterval.toString(),
-    privacy_mode: privacyMode.toString(),
+    fps: fps.toString(),
+    resolution_width: resolutionWidth.toString(),
+    resolution_height: resolutionHeight.toString(),
+    save_frames: saveFrames.toString(),
   });
 
   return fetchAPI(`/monitor/start?${params}`, {
@@ -110,18 +114,20 @@ export async function pollMonitoringStatus(
 ): Promise<Record<string, MonitoringStatus>> {
   const status = await getMonitoringStatus();
 
-  // If specific room IDs requested, filter the response
-  if (roomIds && typeof status === 'object' && !('room_id' in status)) {
-    const filtered: Record<string, MonitoringStatus> = {};
-    for (const roomId of roomIds) {
-      if (status[roomId]) {
-        filtered[roomId] = status[roomId];
+  // Backend /monitor/status (no room_id) returns { total_rooms, active_rooms, rooms: {...} }
+  if (status && typeof status === 'object' && 'rooms' in (status as any)) {
+    const allRooms = (status as any).rooms as Record<string, MonitoringStatus>;
+    if (roomIds) {
+      const filtered: Record<string, MonitoringStatus> = {};
+      for (const roomId of roomIds) {
+        if (allRooms[roomId]) filtered[roomId] = allRooms[roomId];
       }
+      return filtered;
     }
-    return filtered;
+    return allRooms;
   }
 
-  // If single room response, convert to record
+  // If single room response (room_id present at top-level), convert to record
   if ('room_id' in status) {
     const singleStatus = status as MonitoringStatus;
     return { [singleStatus.room_id]: singleStatus };

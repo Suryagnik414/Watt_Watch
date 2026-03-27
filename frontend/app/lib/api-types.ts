@@ -53,15 +53,21 @@ export interface AuditResponse {
   model_versions: Record<string, any>;
 }
 
-// Monitoring status response
+// Monitoring status response — matches backend /monitor/status response
 export interface MonitoringStatus {
   room_id: string;
-  is_active: boolean;
+  status: 'running' | 'stopped' | 'not_configured';
+  is_running: boolean;
   camera_id?: number;
+  fps?: number;
+  resolution?: [number, number];
   frame_count?: number;
-  sample_interval_sec?: number;
+  frames_processed?: number;
+  current_state?: string;
+  state_transition_count?: number;
   last_event?: RoomEvent;
   uptime_sec?: number;
+  processor_performance?: Record<string, any>;
 }
 
 // Health check response

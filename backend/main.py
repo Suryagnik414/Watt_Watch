@@ -1,14 +1,16 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Set
 import tempfile
 import os
 import base64
 import numpy as np
 import cv2
 import torch
+import asyncio
+import json
 
 # Import YOLO after torch to avoid DLL issues
 try:
@@ -1176,11 +1178,14 @@ async def get_monitoring_status(room_id: Optional[str] = Query(None, description
                 stats["current_state"] = tracker.current_state
                 stats["state_transition_count"] = tracker.transition_count
 
-            # Add processor performance stats (OPTIMIZED)
+            # Add processor performance stats and last_event (OPTIMIZED)
             if room_id in _frame_processors:
                 processor = _frame_processors[room_id]
                 processor_stats = processor.get_stats()
                 stats["processor_performance"] = processor_stats
+                # Include last_event so frontend can display live room data
+                if processor.last_event is not None:
+                    stats["last_event"] = processor.last_event.model_dump(mode="json")
 
             return {
                 "room_id": room_id,
@@ -1198,11 +1203,14 @@ async def get_monitoring_status(room_id: Optional[str] = Query(None, description
                     stats["current_state"] = tracker.current_state
                     stats["state_transition_count"] = tracker.transition_count
 
-                # Add processor performance stats (OPTIMIZED)
+                # Add processor performance stats and last_event (OPTIMIZED)
                 if rid in _frame_processors:
                     processor = _frame_processors[rid]
                     processor_stats = processor.get_stats()
                     stats["processor_performance"] = processor_stats
+                    # Include last_event so frontend can display live room data
+                    if processor.last_event is not None:
+                        stats["last_event"] = processor.last_event.model_dump(mode="json")
 
                 all_status[rid] = {
                     "status": "running" if stats["is_running"] else "stopped",
@@ -1243,6 +1251,100 @@ async def shutdown_event():
     stop_all_samplers()
 
 
+# ============================================================================
+# WEBSOCKET: Real-time monitoring event stream
+# ============================================================================
+
+class WebSocketManager:
+    """Manages WebSocket connections per room for real-time event broadcasting."""
+
+    def __init__(self):
+        # room_id -> set of active WebSocket connections
+        self._connections: Dict[str, Set[WebSocket]] = {}
+
+    async def connect(self, room_id: str, ws: WebSocket):
+        await ws.accept()
+        if room_id not in self._connections:
+            self._connections[room_id] = set()
+        self._connections[room_id].add(ws)
+        print(f"[WS] Client connected to room '{room_id}' (total: {len(self._connections[room_id])})")
+
+    def disconnect(self, room_id: str, ws: WebSocket):
+        if room_id in self._connections:
+            self._connections[room_id].discard(ws)
+            print(f"[WS] Client disconnected from room '{room_id}' (remaining: {len(self._connections[room_id])})")
+
+    async def broadcast(self, room_id: str, data: dict):
+        """Send JSON data to all clients connected to a room."""
+        if room_id not in self._connections or not self._connections[room_id]:
+            return
+        dead = set()
+        for ws in list(self._connections[room_id]):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.add(ws)
+        for ws in dead:
+            self._connections[room_id].discard(ws)
+
+
+ws_manager = WebSocketManager()
+
+
+@app.websocket("/ws/{room_id}")
+async def websocket_monitor(room_id: str, ws: WebSocket):
+    """
+    WebSocket endpoint for real-time room monitoring events.
+
+    Client connects to ws://localhost:8000/ws/{room_id}
+    and receives live RoomEvent JSON pushed once per second
+    whenever the room is actively being monitored.
+
+    If no monitoring is active, a status message is sent every 2 seconds.
+    """
+    await ws_manager.connect(room_id, ws)
+    try:
+        last_sent_event_time = None
+        while True:
+            await asyncio.sleep(1)
+
+            # Check if room is being monitored
+            from camera_sampler import _active_samplers
+            if room_id not in _active_samplers:
+                await ws.send_json({
+                    "type": "status",
+                    "room_id": room_id,
+                    "message": "No active monitoring for this room. Start via POST /monitor/start"
+                })
+                continue
+
+            # Get latest event from the processor
+            processor = _frame_processors.get(room_id)
+            if processor is None or processor.last_event is None:
+                await ws.send_json({
+                    "type": "status",
+                    "room_id": room_id,
+                    "message": "Monitoring active, waiting for first frame..."
+                })
+                continue
+
+            event = processor.last_event
+            event_time = str(event.timestamp)
+
+            # Only push if there's a new event
+            if event_time != last_sent_event_time:
+                last_sent_event_time = event_time
+                payload = event.model_dump(mode="json")
+                payload["type"] = "room_event"
+                await ws.send_json(payload)
+
+    except WebSocketDisconnect:
+        ws_manager.disconnect(room_id, ws)
+    except Exception as e:
+        print(f"[WS] Error in room '{room_id}': {e}")
+        ws_manager.disconnect(room_id, ws)
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
