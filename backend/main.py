@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -11,6 +11,9 @@ import cv2
 import torch
 import asyncio
 import json
+import requests
+import threading
+from dotenv import load_dotenv
 
 # Import YOLO after torch to avoid DLL issues
 try:
@@ -37,6 +40,49 @@ from event_logger import get_event_logger
 # PHASE 1: Import camera sampler and state tracker
 from camera_sampler import CameraFrameSampler, CameraConfig, FrameProcessor, get_camera_sampler, stop_all_samplers
 from state_machine import StateTracker
+
+# Load environment variables
+load_dotenv()
+
+# Application Mode Configuration
+APP_MODE = os.getenv("APP_MODE", "dev").lower()  # 'dev' or 'prod'
+VIDEO_STREAM_FPS = int(os.getenv("VIDEO_STREAM_FPS", "5"))
+VIDEO_STREAM_QUALITY = int(os.getenv("VIDEO_STREAM_QUALITY", "75"))
+
+class AppConfig:
+    """Application configuration."""
+    mode: str = APP_MODE
+    is_dev_mode: bool = APP_MODE == "dev"
+    is_prod_mode: bool = APP_MODE == "prod"
+    video_stream_fps: int = VIDEO_STREAM_FPS
+    video_stream_quality: int = VIDEO_STREAM_QUALITY
+    
+    @classmethod
+    def validate_dev_mode(cls):
+        """Raise exception if not in dev mode."""
+        if not cls.is_dev_mode:
+            raise HTTPException(
+                status_code=403,
+                detail="This endpoint is only available in development mode. Set APP_MODE=dev"
+            )
+
+# PHASE 4: AWS REST API Gateway Configuration
+AWS_INGEST_URL = os.getenv("AWS_INGEST_URL", "https://zwgua3w3sb.execute-api.ap-south-1.amazonaws.com/prod/ingest")
+
+def send_event_to_aws(event_dict: dict):
+    """Background task to send event to AWS REST API Gateway"""
+    try:
+        # Convert datetime to string for JSON serialization
+        if 'timestamp' in event_dict and not isinstance(event_dict['timestamp'], str):
+            event_dict['timestamp'] = event_dict['timestamp'].isoformat()
+
+        response = requests.post(AWS_INGEST_URL, json=event_dict, timeout=5)
+        if response.status_code != 200:
+            print(f"[AWS SYNC ERROR] {response.text}")
+        else:
+            print(f"[AWS SYNC SUCCESS] Event logged to REST API for {event_dict.get('room_id')}")
+    except Exception as e:
+        print(f"[AWS SYNC FAILED] Could not connect to AWS: {e}")
 
 app = FastAPI(title="Watt Watch API", version="1.0.0")
 
@@ -75,6 +121,103 @@ async def startup_event():
     else:
         print("⚠ No CUDA GPU available, using CPU (slower inference)")
     print(f"  Device: {DEVICE}")
+    
+    # Log application mode
+    print(f"\n{'='*60}")
+    print(f"  APPLICATION MODE: {APP_MODE.upper()}")
+    if AppConfig.is_dev_mode:
+        print(f"  ✓ Video streaming: ENABLED")
+        print(f"  ✓ Visualization controls: ENABLED")
+        print(f"  ✓ Video FPS: {VIDEO_STREAM_FPS}")
+    else:
+        print(f"  ✗ Video streaming: DISABLED")
+        print(f"  ✗ Visualization controls: DISABLED")
+        print(f"  ✓ Processing only mode")
+    print(f"{'='*60}\n")
+    
+    # Auto-initialize default RTSP streams
+    await auto_initialize_default_streams()
+
+
+async def auto_initialize_default_streams():
+    """Auto-initialize default RTSP camera streams at startup."""
+    # Default RTSP streams configuration
+    default_streams = [
+        {"room_id": "room_1", "camera_source": "rtsp://64.227.185.144:8554/feed1"},
+        {"room_id": "room_2", "camera_source": "rtsp://64.227.185.144:8554/feed2"},
+        {"room_id": "room_3", "camera_source": "rtsp://64.227.185.144:8554/feed3"},
+        {"room_id": "room_4", "camera_source": "rtsp://64.227.185.144:8554/feed4"},
+        {"room_id": "room_5", "camera_source": "rtsp://64.227.185.144:8554/feed5"},
+        {"room_id": "room_6", "camera_source": "rtsp://64.227.185.144:8554/feed6"},
+    ]
+    
+    # Check if auto-initialization is enabled
+    auto_init = os.getenv("AUTO_INIT_STREAMS", "true").lower() == "true"
+    if not auto_init:
+        print("[INFO] Auto-initialization disabled (AUTO_INIT_STREAMS=false)")
+        return
+    
+    print(f"\n{'='*60}")
+    print(f"  AUTO-INITIALIZING {len(default_streams)} RTSP STREAMS")
+    print(f"{'='*60}")
+    
+    from camera_sampler import _active_samplers
+    
+    # Initialize streams in parallel using threads
+    def init_stream(stream_config):
+        room_id = stream_config["room_id"]
+        camera_source = stream_config["camera_source"]
+        
+        try:
+            print(f"[INIT] Starting {room_id}: {camera_source}")
+            
+            # Create camera config
+            config = CameraConfig(
+                camera_source=camera_source,
+                fps=0.5,  # Conservative FPS for stability
+                resolution=(640, 480),
+                room_id=room_id,
+                save_frames=False,
+                rtsp_timeout=10
+            )
+            
+            # Create sampler
+            sampler = CameraFrameSampler(config)
+            
+            # Create frame processor
+            processor = FrameProcessor(process_frame_for_monitoring, max_processing_time=5.0)
+            
+            # Start monitoring
+            sampler.start(frame_callback=processor)
+            
+            # Update global registries
+            _active_samplers[room_id] = sampler
+            _frame_processors[room_id] = processor
+            
+            # Initialize visualization options
+            if room_id not in _visualization_options:
+                _visualization_options[room_id] = VisualizationOptions()
+            
+            print(f"[INIT] ✓ {room_id} started successfully")
+            return True
+            
+        except Exception as e:
+            print(f"[INIT] ✗ {room_id} failed: {e}")
+            return False
+    
+    # Initialize all streams in parallel threads
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(init_stream, stream): stream for stream in default_streams}
+        
+        success_count = 0
+        for future in as_completed(futures):
+            if future.result():
+                success_count += 1
+    
+    print(f"\n[INIT] Initialization complete: {success_count}/{len(default_streams)} streams active")
+    print(f"{'='*60}\n")
 
 # Model weight names
 YOLO_POSE_MODEL = "yolov8x-pose-p6.pt"
@@ -87,6 +230,12 @@ APPLIANCE_CLASSES = {
 }
 SKELETON_MAP = [(16,14),(14,12),(17,15),(15,13),(12,13),(6,12),(7,13),
                 (6,7),(6,8),(7,9),(8,10),(9,11),(2,3),(1,2),(1,3),(2,4),(3,5)]
+
+# Global tracking dictionaries
+_room_state_trackers: Dict[str, StateTracker] = {}
+_frame_processors: Dict[str, Any] = {}
+_visualization_options: Dict[str, Any] = {}  # Per-room visualization settings (VisualizationOptions)
+
 
 
 def _load_yolo_model(weight_name: str, device: str = DEVICE):
@@ -160,6 +309,30 @@ class DashboardAuditResponse(BaseModel):
     s_thresh: int
     ghost_image_base64: Optional[str] = None
     annotated_image_path: Optional[str] = None
+
+
+class VisualizationOptions(BaseModel):
+    """Visualization options for video streaming (dev mode only)."""
+    show_skeleton: bool = True
+    show_bounding_boxes: bool = True
+    show_keypoints: bool = True
+    apply_blur: bool = False
+    privacy_mode: bool = False
+    show_appliance_labels: bool = True
+    show_energy_info: bool = True
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "show_skeleton": True,
+                "show_bounding_boxes": True,
+                "show_keypoints": True,
+                "apply_blur": False,
+                "privacy_mode": False,
+                "show_appliance_labels": True,
+                "show_energy_info": True
+            }
+        }
 
 
 def _parse_pose_detections(result, classes: Optional[List[int]] = None) -> List[Dict[str, Any]]:
@@ -725,6 +898,7 @@ async def detect_batch(
 
 @app.post("/audit", response_model=AuditResponse)
 async def comprehensive_audit(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     room_id: Optional[str] = Query("default_room", description="Unique identifier for the room/camera"),
     sensitivity: Optional[int] = Query(160, description="Brightness threshold for appliance ON/OFF detection (0-255)"),
@@ -864,6 +1038,9 @@ async def comprehensive_audit(
         except Exception as e:
             print(f"[WARN] Failed to log event: {e}")
 
+        # PHASE 4: Send to AWS REST API (Non-blocking)
+        background_tasks.add_task(send_event_to_aws, event.model_dump(mode="json"))
+
         # 8. Calculate processing time
         processing_time_ms = (time.time() - start_time) * 1000
 
@@ -943,9 +1120,7 @@ async def dashboard_audit(
 # PHASE 1: CONTINUOUS MONITORING ENDPOINTS
 # ============================================================================
 
-# Global state trackers for each room
-_room_state_trackers: Dict[str, StateTracker] = {}
-_frame_processors: Dict[str, FrameProcessor] = {}  # Store processors to get performance stats
+# Global state trackers for each room (already defined at startup, removing duplicate)
 
 
 def get_state_tracker(room_id: str) -> StateTracker:
@@ -953,6 +1128,86 @@ def get_state_tracker(room_id: str) -> StateTracker:
     if room_id not in _room_state_trackers:
         _room_state_trackers[room_id] = StateTracker()
     return _room_state_trackers[room_id]
+
+
+def get_visualization_options(room_id: str) -> VisualizationOptions:
+    """Get or create visualization options for a room."""
+    if room_id not in _visualization_options:
+        _visualization_options[room_id] = VisualizationOptions()
+    return _visualization_options[room_id]
+
+
+# Cache for latest processed frames (for video streaming in dev mode)
+_latest_frames: Dict[str, Tuple[np.ndarray, RoomEvent, float]] = {}  # room_id -> (frame, event, timestamp)
+
+
+def render_visualizations(frame: np.ndarray, event: RoomEvent, viz_options: VisualizationOptions) -> np.ndarray:
+    """
+    Render visualization overlays on a frame based on options (DEV MODE ONLY).
+    
+    Args:
+        frame: Original camera frame
+        event: Processed RoomEvent with detection data
+        viz_options: Visualization options for this room
+        
+    Returns:
+        Annotated frame with requested visualizations
+    """
+    annotated = frame.copy()
+    
+    # Privacy mode: full blur
+    if viz_options.privacy_mode:
+        annotated = cv2.GaussianBlur(annotated, (99, 99), 30)
+        return annotated
+    
+    # Apply background blur if requested
+    if viz_options.apply_blur:
+        annotated = cv2.GaussianBlur(annotated, (21, 21), 0)
+    
+    # Draw bounding boxes for persons and appliances
+    if viz_options.show_bounding_boxes and event.appliances:
+        for appliance in event.appliances:
+            # Different colors for different appliances
+            color = (0, 255, 0) if appliance.appliance_type == "Projector/TV" else (255, 165, 0)
+            
+            # Draw bounding box
+            x1, y1, x2, y2 = map(int, [appliance.x_min, appliance.y_min, appliance.x_max, appliance.y_max])
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            
+            # Show appliance labels if enabled
+            if viz_options.show_appliance_labels:
+                label = f"{appliance.appliance_type} ({appliance.confidence:.2f})"
+                cv2.putText(annotated, label, (x1, y1 - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    
+    # Draw skeleton and keypoints (simplified - using pose_utils if available)
+    if (viz_options.show_skeleton or viz_options.show_keypoints) and hasattr(event, 'pose_detections'):
+        try:
+            # Use existing draw_skeleton_on_image if available
+            from pose_utils import draw_skeleton_on_image
+            # This is a simplified approach - you may want to extract keypoints from event
+            # For now, we'll skip skeleton drawing to avoid complexity
+            pass
+        except Exception:
+            pass
+    
+    # Show energy information overlay
+    if viz_options.show_energy_info:
+        # Create info panel at top
+        info_text = [
+            f"Persons: {event.person_count}",
+            f"Appliances: {len(event.appliances)}",
+            f"Waste: {'YES' if event.energy_waste_detected else 'NO'}",
+            f"Saved: {event.energy_saved_kwh:.2f} kWh"
+        ]
+        
+        y_offset = 30
+        for i, text in enumerate(info_text):
+            color = (0, 0, 255) if event.energy_waste_detected and i == 2 else (255, 255, 255)
+            cv2.putText(annotated, text, (10, y_offset + i * 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    
+    return annotated
 
 
 def process_frame_for_monitoring(frame: np.ndarray, room_id: str) -> RoomEvent:
@@ -1030,14 +1285,36 @@ def process_frame_for_monitoring(frame: np.ndarray, room_id: str) -> RoomEvent:
             privacy_mode=False  # Live monitoring uses standard processing
         )
 
-        # 7. Log event (ASYNC - don't block on logging)
+        # --- INTELLIGENT EDGE FILTER ---
+        # Define what makes an event "Significant" enough to send to AWS
+        is_significant = False
+
+        # Reason A: State just changed (e.g., Someone left the room, TV is still on)
+        if state_changed:
+            is_significant = True
+
+        # Reason B: Escalation intervals crossed (e.g., Every 5 minutes of continuous waste)
+        # Assuming fps is roughly 1 frame per sec. 300 sec = 5 mins.
+        if energy_waste_detected and (duration_sec > 0 and duration_sec % 300 == 0):
+            is_significant = True
+
+        # 7. Log and Sync (ASYNC - don't block on logging)
         try:
             logger = get_event_logger()
             # Only log significant events to reduce I/O overhead
-            if energy_waste_detected or state_changed:
+            if is_significant:
                 logger.log_event(event)
+
+                # Send to AWS Smart Lambda (Non-blocking, threaded)
+                # Note: Running in camera sampler thread, so we use threading instead of BackgroundTasks
+                threading.Thread(target=send_event_to_aws, args=(event.model_dump(mode="json"),), daemon=True).start()
+
         except Exception as e:
-            print(f"[WARN] Failed to log monitoring event: {e}")
+            print(f"[WARN] Failed to log/sync monitoring event: {e}")
+
+        # Cache frame for video streaming in dev mode
+        if AppConfig.is_dev_mode:
+            _latest_frames[room_id] = (frame.copy(), event, time.time())
 
         return event
 
@@ -1061,38 +1338,59 @@ def process_frame_for_monitoring(frame: np.ndarray, room_id: str) -> RoomEvent:
 @app.post("/monitor/start")
 async def start_monitoring(
     room_id: str = Query("default_room", description="Unique identifier for the room"),
-    camera_id: int = Query(0, description="Camera device ID (0 = default)"),
+    camera_source: Optional[str] = Query(None, description="Camera source: device ID (e.g., '0') or RTSP URL (e.g., 'rtsp://...')"),
+    camera_id: Optional[int] = Query(None, description="DEPRECATED: Use camera_source instead. Camera device ID (0 = default)"),
     fps: float = Query(0.5, description="Processing frames per second (OPTIMIZED: default 0.5 for stability)"),
     resolution_width: int = Query(640, description="Camera width"),
     resolution_height: int = Query(480, description="Camera height"),
     save_frames: bool = Query(False, description="Save captured frames to disk")
 ):
     """
-    PHASE 1: Start continuous monitoring for a room.
-
-    Begins live camera capture and real-time energy audit processing.
+    Start continuous monitoring for a room with support for multiple camera sources.
+    
+    Supports:
+    - Local cameras: camera_source="0", camera_source="1", etc.
+    - RTSP streams: camera_source="rtsp://username:password@ip:port/stream"
+    - HTTP streams: camera_source="http://ip:port/stream"
+    
     OPTIMIZED: Uses conservative defaults for stability.
     """
     try:
+        # Determine camera source (backward compatibility)
+        if camera_source is None and camera_id is not None:
+            source = camera_id
+            print(f"[WARN] camera_id parameter is deprecated. Use camera_source instead.")
+        elif camera_source is not None:
+            # Try to convert to int if it's a numeric string
+            try:
+                source = int(camera_source)
+            except ValueError:
+                source = camera_source  # Keep as string (RTSP URL)
+        else:
+            source = 0  # Default to device 0
+        
         # Check if already monitoring this room
         sampler = get_camera_sampler(room_id, config=None)
         if sampler.is_running:
             return {
                 "message": f"Monitoring already active for room {room_id}",
                 "room_id": room_id,
+                "camera_source": str(source),
                 "status": "already_running"
             }
 
         # Create camera config with OPTIMIZED defaults
         config = CameraConfig(
-            camera_id=camera_id,
+            camera_source=source,
             fps=max(0.1, min(1.0, fps)),  # Clamp FPS between 0.1 and 1.0 for stability
             resolution=(resolution_width, resolution_height),
             room_id=room_id,
             save_frames=save_frames
         )
 
-        print(f"[INFO] Starting monitoring with FPS: {config.fps}, Resolution: {config.resolution}")
+        print(f"[INFO] Starting monitoring for room '{room_id}'")
+        print(f"  Source: {source} ({'RTSP/HTTP Stream' if config.is_rtsp else 'Local Camera'})")
+        print(f"  FPS: {config.fps}, Resolution: {config.resolution}")
 
         # Create sampler
         new_sampler = CameraFrameSampler(config)
@@ -1104,19 +1402,25 @@ async def start_monitoring(
         new_sampler.start(frame_callback=processor)
 
         # Update global registries
-        global _active_samplers, _frame_processors
+        global _active_samplers, _frame_processors, _visualization_options
         from camera_sampler import _active_samplers
         _active_samplers[room_id] = new_sampler
         _frame_processors[room_id] = processor
+        
+        # Initialize default visualization options for this room
+        if room_id not in _visualization_options:
+            _visualization_options[room_id] = VisualizationOptions()
 
         return {
             "message": f"Monitoring started for room {room_id}",
             "room_id": room_id,
-            "camera_id": camera_id,
+            "camera_source": str(source),
+            "is_rtsp": config.is_rtsp,
             "fps": config.fps,
             "resolution": [resolution_width, resolution_height],
             "status": "started",
-            "optimizations": "Using reduced FPS and resolution for stability"
+            "mode": APP_MODE,
+            "video_streaming": AppConfig.is_dev_mode
         }
 
     except Exception as e:
@@ -1243,6 +1547,259 @@ async def stop_all_monitoring():
         raise HTTPException(status_code=500, detail=f"Failed to stop all monitoring: {str(e)}")
 
 
+@app.get("/monitor/streams")
+async def list_active_streams():
+    """
+    List all active camera streams with their configuration and status.
+    
+    Returns information about all currently monitored rooms including:
+    - Camera source (device ID or RTSP URL)
+    - Stream type (local/RTSP)
+    - Status and performance metrics
+    """
+    try:
+        from camera_sampler import _active_samplers
+        
+        streams = []
+        for room_id, sampler in _active_samplers.items():
+            stats = sampler.get_stats()
+            stream_info = {
+                "room_id": room_id,
+                "camera_source": str(sampler.config.camera_source),
+                "is_rtsp": sampler.config.is_rtsp,
+                "status": "running" if sampler.is_running else "stopped",
+                "fps": sampler.config.fps,
+                "resolution": sampler.config.resolution,
+                "frame_count": stats.get("frame_count", 0),
+                "error_count": stats.get("error_count", 0),
+                "uptime_sec": stats.get("uptime_sec", 0)
+            }
+            
+            # Add current state if available
+            if room_id in _room_state_trackers:
+                stream_info["current_state"] = _room_state_trackers[room_id].current_state
+                
+            streams.append(stream_info)
+        
+        return {
+            "total_streams": len(streams),
+            "active_streams": sum(1 for s in streams if s["status"] == "running"),
+            "mode": APP_MODE,
+            "streams": streams
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list streams: {str(e)}")
+
+
+@app.get("/monitor/analytics")
+async def get_analytics():
+    """
+    Get aggregated analytics across all monitored rooms.
+    
+    Returns:
+    - Total person count across all rooms
+    - Total active appliances
+    - Energy waste summary
+    - State distribution
+    - Per-room statistics
+    """
+    try:
+        from camera_sampler import _active_samplers
+        
+        total_people = 0
+        total_appliances = 0
+        energy_waste_rooms = []
+        state_distribution = {}
+        room_analytics = []
+        total_energy_saved = 0.0
+        
+        for room_id, sampler in _active_samplers.items():
+            # Get latest event from processor
+            processor = _frame_processors.get(room_id)
+            if processor and processor.last_event:
+                event = processor.last_event
+                
+                # Aggregate counts
+                total_people += event.people_count
+                total_appliances += len(event.appliances)
+                total_energy_saved += event.energy_saved_kwh
+                
+                # Track energy waste
+                if event.energy_waste_detected:
+                    energy_waste_rooms.append(room_id)
+                
+                # State distribution
+                state = event.room_state
+                state_distribution[state] = state_distribution.get(state, 0) + 1
+                
+                # Per-room analytics
+                room_analytics.append({
+                    "room_id": room_id,
+                    "people_count": event.people_count,
+                    "appliance_count": len(event.appliances),
+                    "room_state": event.room_state,
+                    "energy_waste_detected": event.energy_waste_detected,
+                    "energy_saved_kwh": event.energy_saved_kwh,
+                    "duration_sec": event.duration_sec,
+                    "confidence": event.confidence,
+                    "timestamp": event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp)
+                })
+        
+        # Calculate percentages
+        total_rooms = len(_active_samplers)
+        waste_percentage = (len(energy_waste_rooms) / total_rooms * 100) if total_rooms > 0 else 0
+        
+        return {
+            "summary": {
+                "total_rooms": total_rooms,
+                "total_people": total_people,
+                "total_appliances": total_appliances,
+                "energy_waste_rooms": len(energy_waste_rooms),
+                "waste_percentage": round(waste_percentage, 1),
+                "total_energy_saved_kwh": round(total_energy_saved, 3),
+                "mode": APP_MODE
+            },
+            "state_distribution": state_distribution,
+            "energy_waste_rooms": energy_waste_rooms,
+            "room_analytics": room_analytics,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get analytics: {str(e)}")
+
+
+
+        from camera_sampler import _active_samplers
+        
+        streams = []
+        for room_id, sampler in _active_samplers.items():
+            stats = sampler.get_stats()
+            stream_info = {
+                "room_id": room_id,
+                "camera_source": str(sampler.config.camera_source),
+                "is_rtsp": sampler.config.is_rtsp,
+                "status": "running" if sampler.is_running else "stopped",
+                "fps": sampler.config.fps,
+                "resolution": sampler.config.resolution,
+                "frame_count": stats.get("frame_count", 0),
+                "error_count": stats.get("error_count", 0),
+                "uptime_sec": stats.get("uptime_sec", 0)
+            }
+            
+            # Add current state if available
+            if room_id in _room_state_trackers:
+                stream_info["current_state"] = _room_state_trackers[room_id].current_state
+                
+            streams.append(stream_info)
+        
+        return {
+            "total_streams": len(streams),
+            "active_streams": sum(1 for s in streams if s["status"] == "running"),
+            "mode": APP_MODE,
+            "streams": streams
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list streams: {str(e)}")
+
+
+@app.post("/monitor/visualizations")
+async def update_visualizations(
+    room_id: str = Query(..., description="Room ID to update visualizations"),
+    show_skeleton: Optional[bool] = Query(None, description="Show skeleton overlay"),
+    show_bounding_boxes: Optional[bool] = Query(None, description="Show bounding boxes"),
+    show_keypoints: Optional[bool] = Query(None, description="Show keypoints"),
+    apply_blur: Optional[bool] = Query(None, description="Apply blur effect"),
+    privacy_mode: Optional[bool] = Query(None, description="Enable privacy mode"),
+    show_appliance_labels: Optional[bool] = Query(None, description="Show appliance labels"),
+    show_energy_info: Optional[bool] = Query(None, description="Show energy information")
+):
+    """
+    Update visualization options for a specific room (DEV MODE ONLY).
+    
+    This endpoint allows toggling various visualization overlays on the video stream:
+    - Skeleton overlay (pose visualization)
+    - Bounding boxes (person/appliance detection)
+    - Keypoints (joint positions)
+    - Blur effect (background blur)
+    - Privacy mode (full face/body blur)
+    - Appliance labels
+    - Energy information overlays
+    
+    Only available when APP_MODE=dev.
+    """
+    # Validate dev mode
+    AppConfig.validate_dev_mode()
+    
+    try:
+        # Get or create visualization options for this room
+        viz_options = get_visualization_options(room_id)
+        
+        # Update only provided fields
+        updates = {}
+        if show_skeleton is not None:
+            viz_options.show_skeleton = show_skeleton
+            updates["show_skeleton"] = show_skeleton
+        if show_bounding_boxes is not None:
+            viz_options.show_bounding_boxes = show_bounding_boxes
+            updates["show_bounding_boxes"] = show_bounding_boxes
+        if show_keypoints is not None:
+            viz_options.show_keypoints = show_keypoints
+            updates["show_keypoints"] = show_keypoints
+        if apply_blur is not None:
+            viz_options.apply_blur = apply_blur
+            updates["apply_blur"] = apply_blur
+        if privacy_mode is not None:
+            viz_options.privacy_mode = privacy_mode
+            updates["privacy_mode"] = privacy_mode
+        if show_appliance_labels is not None:
+            viz_options.show_appliance_labels = show_appliance_labels
+            updates["show_appliance_labels"] = show_appliance_labels
+        if show_energy_info is not None:
+            viz_options.show_energy_info = show_energy_info
+            updates["show_energy_info"] = show_energy_info
+        
+        # Update global registry
+        _visualization_options[room_id] = viz_options
+        
+        return {
+            "message": f"Visualization options updated for room {room_id}",
+            "room_id": room_id,
+            "updates": updates,
+            "current_options": viz_options.model_dump()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update visualizations: {str(e)}")
+
+
+@app.get("/monitor/visualizations/{room_id}")
+async def get_visualizations(room_id: str):
+    """
+    Get current visualization options for a room (DEV MODE ONLY).
+    
+    Returns the current state of all visualization toggles for the specified room.
+    """
+    # Validate dev mode
+    AppConfig.validate_dev_mode()
+    
+    try:
+        viz_options = get_visualization_options(room_id)
+        return {
+            "room_id": room_id,
+            "mode": APP_MODE,
+            "options": viz_options.model_dump()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get visualizations: {str(e)}")
+
+
 # Cleanup on app shutdown
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1294,19 +1851,25 @@ ws_manager = WebSocketManager()
 @app.websocket("/ws/{room_id}")
 async def websocket_monitor(room_id: str, ws: WebSocket):
     """
-    WebSocket endpoint for real-time room monitoring events.
-
+    WebSocket endpoint for real-time room monitoring.
+    
+    In DEV mode:
+    - Sends RoomEvent JSON + base64-encoded video frames with visualizations
+    - Frame rate controlled by VIDEO_STREAM_FPS
+    
+    In PROD mode:
+    - Sends RoomEvent JSON only (no video)
+    
     Client connects to ws://localhost:8000/ws/{room_id}
-    and receives live RoomEvent JSON pushed once per second
-    whenever the room is actively being monitored.
-
-    If no monitoring is active, a status message is sent every 2 seconds.
     """
     await ws_manager.connect(room_id, ws)
     try:
         last_sent_event_time = None
+        last_frame_time = 0.0
+        frame_interval = 1.0 / VIDEO_STREAM_FPS if AppConfig.is_dev_mode else 1.0
+        
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)  # Check more frequently for smoother streaming
 
             # Check if room is being monitored
             from camera_sampler import _active_samplers
@@ -1314,8 +1877,10 @@ async def websocket_monitor(room_id: str, ws: WebSocket):
                 await ws.send_json({
                     "type": "status",
                     "room_id": room_id,
+                    "mode": APP_MODE,
                     "message": "No active monitoring for this room. Start via POST /monitor/start"
                 })
+                await asyncio.sleep(2)  # Wait longer between status messages
                 continue
 
             # Get latest event from the processor
@@ -1324,18 +1889,54 @@ async def websocket_monitor(room_id: str, ws: WebSocket):
                 await ws.send_json({
                     "type": "status",
                     "room_id": room_id,
+                    "mode": APP_MODE,
                     "message": "Monitoring active, waiting for first frame..."
                 })
+                await asyncio.sleep(1)
                 continue
 
             event = processor.last_event
             event_time = str(event.timestamp)
+            current_time = time.time()
 
-            # Only push if there's a new event
-            if event_time != last_sent_event_time:
+            # Check if we should send a frame update
+            should_send = (event_time != last_sent_event_time) or \
+                         (AppConfig.is_dev_mode and (current_time - last_frame_time >= frame_interval))
+
+            if should_send:
                 last_sent_event_time = event_time
                 payload = event.model_dump(mode="json")
                 payload["type"] = "room_event"
+                payload["mode"] = APP_MODE
+                
+                # In dev mode, add video frame if available
+                if AppConfig.is_dev_mode and room_id in _latest_frames:
+                    frame, cached_event, frame_ts = _latest_frames[room_id]
+                    
+                    # Only send frames that aren't too old (within last 5 seconds)
+                    if current_time - frame_ts < 5.0:
+                        try:
+                            # Get visualization options
+                            viz_options = get_visualization_options(room_id)
+                            
+                            # Render visualizations
+                            annotated_frame = render_visualizations(frame, cached_event, viz_options)
+                            
+                            # Encode frame to JPEG
+                            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), VIDEO_STREAM_QUALITY]
+                            _, buffer = cv2.imencode('.jpg', annotated_frame, encode_param)
+                            
+                            # Convert to base64
+                            frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                            
+                            payload["frame_data"] = frame_base64
+                            payload["frame_timestamp"] = frame_ts
+                            payload["visualization_options"] = viz_options.model_dump()
+                            
+                            last_frame_time = current_time
+                        except Exception as e:
+                            print(f"[WS] Error encoding frame for room '{room_id}': {e}")
+                
                 await ws.send_json(payload)
 
     except WebSocketDisconnect:

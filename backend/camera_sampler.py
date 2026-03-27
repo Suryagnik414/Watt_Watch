@@ -8,7 +8,7 @@ Converts the system from single-image processing to real-time surveillance.
 import cv2
 import time
 import threading
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, Union
 from dataclasses import dataclass
 from datetime import datetime
 import numpy as np
@@ -17,13 +17,27 @@ from pathlib import Path
 
 @dataclass
 class CameraConfig:
-    """Camera configuration parameters."""
-    camera_id: int = 0  # Default camera (webcam)
+    """Camera configuration parameters.
+    
+    Supports both local cameras (device ID as int) and RTSP streams (URL as string).
+    """
+    camera_source: Union[int, str] = 0  # Camera device ID (int) or RTSP URL (str)
     fps: float = 0.5  # Reduced from 1.0 to 0.5 FPS - process every 2 seconds for stability
     resolution: tuple = (640, 480)  # (width, height) - reasonable resolution for processing
     room_id: str = "default_room"
     save_frames: bool = False
     frame_save_dir: str = "captured_frames"
+    rtsp_timeout: int = 10  # Timeout for RTSP connection attempts (seconds)
+    
+    @property
+    def camera_id(self) -> Union[int, str]:
+        """Backward compatibility property."""
+        return self.camera_source
+    
+    @property
+    def is_rtsp(self) -> bool:
+        """Check if this is an RTSP stream."""
+        return isinstance(self.camera_source, str) and self.camera_source.startswith(('rtsp://', 'rtmp://', 'http://'))
 
 
 class CameraFrameSampler:
@@ -58,27 +72,50 @@ class CameraFrameSampler:
             Path(config.frame_save_dir).mkdir(parents=True, exist_ok=True)
 
     def _initialize_camera(self) -> bool:
-        """Initialize camera connection."""
+        """Initialize camera connection (supports both device IDs and RTSP streams)."""
         try:
-            self.cap = cv2.VideoCapture(self.config.camera_id)
+            source = self.config.camera_source
+            
+            # For RTSP streams, add additional options
+            if self.config.is_rtsp:
+                print(f"[INFO] Initializing RTSP stream: {source}")
+                # Set CAP_FFMPEG backend for RTSP streams
+                self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                
+                # Set buffer size to reduce latency
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                
+                # Set timeout for RTSP (in milliseconds)
+                self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, self.config.rtsp_timeout * 1000)
+                self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, self.config.rtsp_timeout * 1000)
+            else:
+                print(f"[INFO] Initializing local camera: {source}")
+                self.cap = cv2.VideoCapture(source)
 
             if not self.cap.isOpened():
-                print(f"[ERROR] Cannot open camera {self.config.camera_id}")
+                print(f"[ERROR] Cannot open camera source {source}")
                 return False
 
-            # Set camera properties
+            # Set camera properties (may not work for all RTSP streams)
             width, height = self.config.resolution
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if not self.config.is_rtsp:
+                # Only set resolution for local cameras
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-            # Test frame capture
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                print(f"[ERROR] Cannot capture test frame from camera {self.config.camera_id}")
-                return False
-
-            print(f"[INFO] Camera {self.config.camera_id} initialized: {frame.shape}")
-            return True
+            # Test frame capture with retry for RTSP streams
+            max_retries = 3 if self.config.is_rtsp else 1
+            for attempt in range(max_retries):
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    print(f"[INFO] Camera source {source} initialized: {frame.shape}")
+                    return True
+                if attempt < max_retries - 1:
+                    print(f"[WARN] Frame capture attempt {attempt + 1} failed, retrying...")
+                    time.sleep(1)
+            
+            print(f"[ERROR] Cannot capture test frame from camera source {source}")
+            return False
 
         except Exception as e:
             print(f"[ERROR] Camera initialization failed: {e}")
@@ -127,7 +164,8 @@ class CameraFrameSampler:
                 frame_meta = {
                     "timestamp": datetime.utcnow(),
                     "frame_number": self.frame_count,
-                    "camera_id": self.config.camera_id,
+                    "camera_source": self.config.camera_source,
+                    "is_rtsp": self.config.is_rtsp,
                     "room_id": self.config.room_id,
                     "resolution": frame.shape[:2]
                 }
