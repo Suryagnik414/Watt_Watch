@@ -12,3 +12,4 @@ pyyaml==6.0.1
 torch==2.11.0+cu130
 torchvision==0.26.0+cu130
 torchaudio==2.11.0+cu130
+paho-mqtt==1.6.1

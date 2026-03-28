@@ -96,7 +96,9 @@ export default function RoomCard({ room, onSelect, heatmap }: RoomCardProps) {
 
   return (
     <div
-      className={`relative bg-slate-800/60 backdrop-blur-sm rounded-xl border ${borderColor} overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/10 hover:-translate-y-0.5 ${isWaste ? 'shadow-red-500/20 shadow-md' : ''}`}
+      className={`relative bg-slate-800/60 backdrop-blur-sm rounded-xl border ${borderColor} overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/10 hover:-translate-y-0.5 ${
+        isWaste ? 'shadow-[0_0_20px_rgba(239,68,68,0.25)] shadow-red-500/20' : ''
+      }`}
       role="article"
       aria-label={`Room ${room.name}, status: ${room.status}`}
     >

@@ -1809,6 +1809,264 @@ async def shutdown_event():
 
 
 # ============================================================================
+# IoT LED CONTROL: AWS IoT MQTT Integration
+# ============================================================================
+
+import paho.mqtt.client as mqtt
+import ssl
+import tempfile
+import os as os_module
+
+class AWSIoTLEDController:
+    """Controller for triggering LED on/off via AWS IoT MQTT"""
+
+    # AWS IoT credentials (same as ESP32)
+    MQTT_SERVER = "a2okq37cm6zqr9-ats.iot.ap-south-1.amazonaws.com"
+    MQTT_PORT = 8883
+    MQTT_TOPIC = "esp32/led"
+
+    # CA and device certificates (from the Arduino code)
+    ROOT_CA = """-----BEGIN CERTIFICATE-----
+MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
+ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6
+b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL
+MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv
+b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj
+ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM
+9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw
+IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6
+VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L
+93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm
+jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
+AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA
+A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI
+U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs
+N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv
+o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
+5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy
+rqXRfboQnoZsG4q5WTP468SQvvG5
+-----END CERTIFICATE-----"""
+
+    DEVICE_CERT = """-----BEGIN CERTIFICATE-----
+MIIDWTCCAkGgAwIBAgIUdeg0NubEPZ4Z+uxzDL1/NXsukpEwDQYJKoZIhvcNAQEL
+BQAwTTFLMEkGA1UECwxCQW1hem9uIFdlYiBTZXJ2aWNlcyBPPUFtYXpvbi5jb20g
+SW5jLiBMPVNlYXR0bGUgU1Q9V2FzaGluZ3RvbiBDPVVTMB4XDTI2MDMyNzA3Mzgy
+NVoXDTQ5MTIzMTIzNTk1OVowHjEcMBoGA1UEAwwTQVdTIElvVCBDZXJ0aWZpY2F0
+ZTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOzpxSZ5OhIJGyQ292SU
+FmE47iTQ+CWIhiptn8veghhI4qqmap57PArX78O+4AVVPxWTGzvp0/9DllK1hsmx
+7WUHOs+YaVngjRvU1LiHo79Rtegn2UoAiAphplnsPyzTilfah7/Q0YIkaKm3KiIu
+8UZh34x6aMSMPcvpIUUO5Wp21jOeVhwA42DnTSXFKGNGFQPUFO/4t3GM1lGe4nzb
+49QhCqRq3W03sQcxrimdOGuMs+yek/a2KfRNMmg/Vis6i3BxjP6XED6l0TlXno5x
+E6ogE1esEUPPnnIHGKnkdfeaLTg6PR1aa6WHN6XvEFLjQ3h983LHBQpg7W1EjwNB
+LNsCAwEAAaNgMF4wHwYDVR0jBBgwFoAUQuODMI/W5uMyoFs2tqOFn2uCONEwHQYD
+VR0OBBYEFJ9YqxO619eY7NjDVgWsDVZohEA6MAwGA1UdEwEB/wQCMAAwDgYDVR0P
+AQH/BAQDAgeAMA0GCSqGSIb3DQEBCwUAA4IBAQBcp3vfJU3q2roTVtae5E12pnDP
+5orNVyaOxeFvU50VTiSGErIGsifm9k2bwSYWRKd+RDh7QEWmH9OvkOvy6eqk4YIV
+zhdWz6LeFs3xC/Vw8tx7soT9/+sYPE4uZmTzXRTIfUt6o7bi0mr2J7tnxspmbW0i
+Oq2MRrP/8cIEhmbCNXMfWsRB33lp875X8N4Bd4ez2wMakmgCbOiZGdazsJo4ExOp
+SciZof34NOoWi2bSCKzUfX9GssGbHiOtHahZ9WPp7SBmx5/KIfoeyCOhG/S4UKM4
+24gyjKC1gu9+tSB8yvGNwQE6Qr1lb0jElBbAKjBYlCxjk6x+Cy7gZv98prTT
+-----END CERTIFICATE-----"""
+
+    PRIVATE_KEY = """-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA7OnFJnk6EgkbJDb3ZJQWYTjuJND4JYiGKm2fy96CGEjiqqZq
+nns8Ctfvw77gBVU/FZMbO+nT/0OWUrWGybHtZQc6z5hpWeCNG9TUuIejv1G16CfZ
+SgCICmGmWew/LNOKV9qHv9DRgiRoqbcqIi7xRmHfjHpoxIw9y+khRQ7lanbWM55W
+HADjYOdNJcUoY0YVA9QU7/i3cYzWUZ7ifNvj1CEKpGrdbTexBzGuKZ04a4yz7J6T
+9rYp9E0yaD9WKzqLcHGM/pcQPqXROVeejnETqiATV6wRQ8+ecgcYqeR195otODo9
+HVprpYc3pe8QUuNDeH3zcscFCmDtbUSPA0Es2wIDAQABAoIBAQDmzN8aGiOuilx8
+rWfZ/kLHOFUYXNRCjHxYPS/dxslqqybXJQTdnCTkU3Xrdrp7t46bkBKKDcRP/CIo
+NVw4hjRFpgNvVoXb31zY7kDF/K5TpmDW6GtRIq9lnbgYBoWNQBCYgfaZse9JH/su
+y5gqcRzwekz0aBRE1nMlgdq9kkOBsKAmdzAigD3Vo7yt1RuLofV9OmG0xHyvJJLl
+/AwXhcV2CS7lXi5ga6NZcBQucdYDIBFywd/oDaG2/gmhJ8lG1OSRkJMI2jEmE/kL
+u5DJgbSwlUxAJj+v6AuFDSia8mAUhPOJrlrvaKiweB44Fp/4rgnYcdGq+ogx01ZY
+st+PoN+RAoGBAPf3UI8V/jNucZ/FIdJVIQQVWkyLUgrUwxWvZv74/cVGXjDVB05V
+lUvnzT8mXUNyIj4g6KdXd7aEOyQYMEQ/8oWiptCv4SWEzPMe9O744dnZtECM4DFq
+GzzRqAvNKc02Wfvy2B+PjZyydKjpd8K3uM0mrcItSZk159XXOxbRWtLvAoGBAPSW
+x7l2zvQWaXJRLXywcwZ2K7YQgPpODLKIk6tVaZQ4vvlInL7ebsJ6nTY3ys0bQ9Y/
+n8/8RQcWKL9+ioJhE3uOsQgFGsaMwhaZpjbbgHYmcbjma71f9OxGk5YGGtKOTtwK
+FsmoL2WxFBYkJOWI02Dn98iFK5yV+wMWr4g1GxTVAoGBANuaqzzdlHCGOpjt5GM7
+w26zXnJ13KX9Af0dh5D+gPkKtfZ3Y+4LO5qq4wovdt95oDv3tzQk8b+x4hK4XV7E
+Z4vUnfoqGbK5py0V2IQf5R2jgdC9MvxwZUj6wOIaxA+bOBw7WQ6yew8wuMKzab4I
+KeF+hNp4czr+E6E96XXu2Yn/AoGAZaOqx5VpluEhXJIDVwd0JUFCFNxy3JFGkYJT
+6yUJRMD4C1tzV5XTbRnK7tbsfaNQ4115KdLpVHKO6FTLdjalA/ld87k7UTr5BK9A
+9RbuISsEoxONvhp8CxuhBPzwdIMSnjnLEm3DlHyrni/S7VeYj3KV80vzvZRNxRDO
+TMnUwSkCgYAMeG5flQQSsnUhrRAbYPqx8+IFYtCBle/QbePueznLLX4JT2AqCajU
+Eidnp+f7HxgK+GWfGbTraPYs/rPrcz7fCVPxM3svw+WaUeMCItDskO1uRnrDXBZ/
+6806mDhweWvXBGjdUD0/cAzc5Mfmf9iYP0rh/q63z4qS6jYOY+7hzQ==
+-----END RSA PRIVATE KEY-----"""
+
+    def __init__(self):
+        self.client = None
+        self._connected = False
+
+    def connect(self):
+        """Connect to AWS IoT"""
+        try:
+            # Create MQTT client
+            self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="WattWatch_Controller")
+
+            # Set callbacks
+            self.client.on_connect = self._on_connect
+            self.client.on_disconnect = self._on_disconnect
+            self.client.on_publish = self._on_publish
+
+            # Set TLS/SSL - use certificate files
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as ca_file:
+                ca_file.write(self.ROOT_CA)
+                ca_path = ca_file.name
+
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as cert_file:
+                cert_file.write(self.DEVICE_CERT)
+                cert_path = cert_file.name
+
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+                key_file.write(self.PRIVATE_KEY)
+                key_path = key_file.name
+
+            self.client.tls_set(
+                ca_certs=ca_path,
+                certfile=cert_path,
+                keyfile=key_path,
+                cert_reqs=ssl.CERT_REQUIRED,
+                tls_version=ssl.PROTOCOL_TLSv1_2,
+                ciphers=None
+            )
+            self.client.tls_insecure = False
+
+            # Connect to AWS IoT
+            self.client.connect(self.MQTT_SERVER, self.MQTT_PORT, keepalive=60)
+            self.client.loop_start()
+
+            # Wait for connection (with timeout)
+            import time as time_module
+            timeout = time_module.time() + 5
+            while not self._connected and time_module.time() < timeout:
+                time_module.sleep(0.1)
+
+            if not self._connected:
+                raise RuntimeError("Failed to connect to AWS IoT within timeout")
+
+            print("[IoT] Successfully connected to AWS IoT")
+            return True
+
+        except Exception as e:
+            print(f"[IoT] Connection failed: {e}")
+            self._connected = False
+            return False
+
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            self._connected = True
+            print("[IoT] Connected to AWS IoT broker")
+        else:
+            print(f"[IoT] Connection failed with code {rc}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        self._connected = False
+        print(f"[IoT] Disconnected from AWS IoT (code: {rc})")
+
+    def _on_publish(self, client, userdata, mid):
+        print(f"[IoT] Message published (mid: {mid})")
+
+    def send_led_command(self, state: str) -> bool:
+        """Send LED control command (ON or OFF)"""
+        if not self._connected:
+            if not self.connect():
+                return False
+
+        try:
+            # Ensure state is uppercase
+            state = state.upper()
+            if state not in ["ON", "OFF"]:
+                print(f"[IoT] Invalid state: {state}. Must be 'ON' or 'OFF'")
+                return False
+
+            # Publish message to topic
+            result = self.client.publish(self.MQTT_TOPIC, state, qos=1)
+
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                print(f"[IoT] LED command sent: {state}")
+                return True
+            else:
+                print(f"[IoT] Publish failed with code: {result.rc}")
+                return False
+
+        except Exception as e:
+            print(f"[IoT] Error sending command: {e}")
+            return False
+
+    def disconnect(self):
+        """Disconnect from AWS IoT"""
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
+            self._connected = False
+            print("[IoT] Disconnected from AWS IoT")
+
+# Global IoT controller instance
+_iot_controller = AWSIoTLEDController()
+
+
+@app.post("/iot/led")
+async def control_led(state: str = Query(..., description="LED state: ON or OFF")):
+    """
+    Control the ESP32 LED via AWS IoT MQTT.
+
+    Parameters:
+    - state: "ON" or "OFF"
+
+    Returns:
+    - Success/failure status and message
+    """
+    try:
+        # Validate state
+        if state.upper() not in ["ON", "OFF"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid state. Must be 'ON' or 'OFF'"
+            )
+
+        # Send command
+        success = _iot_controller.send_led_command(state)
+
+        if success:
+            return {
+                "status": "success",
+                "message": f"LED turned {state.upper()}",
+                "state": state.upper(),
+                "topic": AWSIoTLEDController.MQTT_TOPIC,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send LED command to ESP32"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] LED control failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error controlling LED: {str(e)}"
+        )
+
+
+@app.get("/iot/status")
+async def get_iot_status():
+    """Get AWS IoT connection status"""
+    return {
+        "connected": _iot_controller._connected,
+        "mqtt_server": AWSIoTLEDController.MQTT_SERVER,
+        "mqtt_port": AWSIoTLEDController.MQTT_PORT,
+        "mqtt_topic": AWSIoTLEDController.MQTT_TOPIC,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+# ============================================================================
 # WEBSOCKET: Real-time monitoring event stream
 # ============================================================================
 

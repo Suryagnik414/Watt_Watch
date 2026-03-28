@@ -1,19 +1,18 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { useUIStore } from '../store/uiStore';
 
 interface NavbarProps {
-  darkMode: boolean;
-  toggleDarkMode: () => void;
   isConnected: boolean;
   alertCount: number;
-  demoMode: boolean;
-  toggleDemoMode: () => void;
 }
 
-export default function Navbar({ darkMode, toggleDarkMode, isConnected, alertCount, demoMode, toggleDemoMode }: NavbarProps) {
+export default function Navbar({ isConnected, alertCount }: NavbarProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [campus, setCampus] = useState('Main Campus');
   const [notifOpen, setNotifOpen] = useState(false);
+  
+  // Get UI state from global store
+  const { darkMode, demoMode, campus, toggleDarkMode, toggleDemoMode, setCampus } = useUIStore();
 
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 1000);

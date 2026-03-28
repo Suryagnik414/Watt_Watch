@@ -6,6 +6,7 @@
 
 import { Suspense } from 'react';
 import { fetchDashboardData } from '../lib/data-aggregation';
+import Navbar from '../components/Navbar';
 import RoomStatusGrid from '../components/RoomStatusGrid';
 import ActiveAlertsList from '../components/ActiveAlertsList';
 import EventTimeline from '../components/EventTimeline';
@@ -16,31 +17,26 @@ import AutoRefreshWrapper from '../components/AutoRefreshWrapper';
 export const revalidate = 5;
 
 export default async function LiveDashboard() {
+  // Fetch high-level data for Navbar
+  let alertCount = 0;
+  let isConnected = false;
+  try {
+    const data = await fetchDashboardData();
+    alertCount = data.alerts?.length || 0;
+    isConnected = true;
+  } catch (e) {
+    console.error('Failed to fetch dashboard data for Navbar:', e);
+    isConnected = false;
+  }
+
   return (
     <AutoRefreshWrapper intervalSeconds={5}>
-      <div className="min-h-screen bg-[#060d1a]" style={{ fontFamily: "'DM Sans', sans-serif" }}>
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/50 sticky top-0 z-10 backdrop-blur-sm">
-        <div className="max-w-screen-2xl mx-auto px-4 md:px-5 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                W
-              </div>
-              <div>
-                <h1 className="text-white font-bold text-xl">Watt Watch</h1>
-                <p className="text-slate-400 text-xs">Live Energy Monitoring</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-green-400 text-xs font-medium">LIVE</span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <div className="min-h-screen bg-[#060d1a] text-slate-200" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      
+      {/* Navbar replaces hardcoded header */}
+      <Navbar isConnected={isConnected} alertCount={alertCount} />
 
-      <main className="max-w-screen-2xl mx-auto px-4 md:px-5 py-5 space-y-6">
+      <main className="max-w-screen-2xl mx-auto px-4 md:px-5 py-6 space-y-8">
         {/* Energy Metrics */}
         <section aria-label="Energy Metrics">
           <Suspense fallback={<LoadingSkeleton type="metrics" />}>
@@ -48,26 +44,26 @@ export default async function LiveDashboard() {
           </Suspense>
         </section>
 
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Room Grid (2 columns) */}
-          <section aria-label="Room Status" className="lg:col-span-2 space-y-4">
+        {/* Grid Layout: Adjusted proportions for better UX */}
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          {/* Main Content Area (3/4 on large screens) */}
+          <div className="xl:col-span-3 space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-white font-bold text-lg">Room Status</h2>
-              <span className="text-slate-500 text-xs">
-                Auto-refresh every 5s
+              <h2 className="text-white font-bold text-xl tracking-tight">Facility Overview</h2>
+              <span className="bg-slate-800/50 text-slate-400 text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-slate-700/50">
+                Auto-syncing (5s)
               </span>
             </div>
             <Suspense fallback={<LoadingSkeleton type="grid" />}>
               <RoomGrid />
             </Suspense>
-          </section>
+          </div>
 
-          {/* Sidebar (1 column) */}
-          <aside className="space-y-6">
+          {/* Right Sidebar (1/4) */}
+          <aside className="xl:col-span-1 flex flex-col gap-6">
             {/* Alerts */}
             <section aria-label="Active Alerts">
-              <h2 className="text-white font-bold text-lg mb-3">Active Alerts</h2>
+              <h2 className="text-white font-bold text-lg mb-3 tracking-tight">Active Alerts</h2>
               <Suspense fallback={<LoadingSkeleton type="alerts" />}>
                 <AlertsSection />
               </Suspense>
@@ -151,7 +147,7 @@ function ErrorDisplay({ message }: { message: string }) {
   );
 }
 
-// Loading skeleton component
+// Loading skeleton component with glassmorphism
 function LoadingSkeleton({ type }: { type: 'metrics' | 'grid' | 'alerts' | 'timeline' }) {
   if (type === 'metrics') {
     return (
@@ -159,11 +155,11 @@ function LoadingSkeleton({ type }: { type: 'metrics' | 'grid' | 'alerts' | 'time
         {[...Array(4)].map((_, i) => (
           <div
             key={i}
-            className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 animate-pulse"
+            className="bg-slate-900/40 backdrop-blur-md border border-slate-700/50 shadow-xl shadow-black/20 rounded-xl p-5 animate-pulse"
           >
-            <div className="h-4 bg-slate-800 rounded w-1/2 mb-3" />
-            <div className="h-8 bg-slate-800 rounded w-3/4 mb-2" />
-            <div className="h-3 bg-slate-800 rounded w-1/3" />
+            <div className="h-4 bg-slate-800/60 rounded w-1/2 mb-3" />
+            <div className="h-8 bg-slate-800/60 rounded w-3/4 mb-2" />
+            <div className="h-3 bg-slate-800/60 rounded w-1/3" />
           </div>
         ))}
       </div>
@@ -176,11 +172,11 @@ function LoadingSkeleton({ type }: { type: 'metrics' | 'grid' | 'alerts' | 'time
         {[...Array(6)].map((_, i) => (
           <div
             key={i}
-            className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 h-40 animate-pulse"
+            className="bg-slate-900/40 backdrop-blur-md border border-slate-700/50 shadow-xl shadow-black/20 rounded-xl p-5 h-40 animate-pulse"
           >
-            <div className="h-4 bg-slate-800 rounded w-1/3 mb-3" />
-            <div className="h-3 bg-slate-800 rounded w-1/2 mb-2" />
-            <div className="h-3 bg-slate-800 rounded w-2/3" />
+            <div className="h-4 bg-slate-800/60 rounded w-1/3 mb-3" />
+            <div className="h-3 bg-slate-800/60 rounded w-1/2 mb-2" />
+            <div className="h-3 bg-slate-800/60 rounded w-2/3" />
           </div>
         ))}
       </div>
@@ -189,11 +185,11 @@ function LoadingSkeleton({ type }: { type: 'metrics' | 'grid' | 'alerts' | 'time
 
   if (type === 'alerts' || type === 'timeline') {
     return (
-      <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 space-y-3 animate-pulse">
+      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-700/50 shadow-xl shadow-black/20 rounded-xl p-4 space-y-3 animate-pulse">
         {[...Array(3)].map((_, i) => (
           <div key={i} className="space-y-2">
-            <div className="h-3 bg-slate-800 rounded w-1/4" />
-            <div className="h-4 bg-slate-800 rounded w-full" />
+            <div className="h-3 bg-slate-800/60 rounded w-1/4" />
+            <div className="h-4 bg-slate-800/60 rounded w-full" />
           </div>
         ))}
       </div>

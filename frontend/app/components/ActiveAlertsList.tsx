@@ -37,6 +37,7 @@ function AlertCard({ alert }: { alert: DashboardAlert }) {
       text: 'text-red-400',
       icon: '🔴',
       label: 'CRITICAL',
+      glow: 'shadow-[0_0_15px_rgba(239,68,68,0.2)]',
     },
     warning: {
       bg: 'bg-yellow-900/20',
@@ -44,6 +45,7 @@ function AlertCard({ alert }: { alert: DashboardAlert }) {
       text: 'text-yellow-400',
       icon: '⚠️',
       label: 'WARNING',
+      glow: 'shadow-[0_0_12px_rgba(251,191,36,0.15)]',
     },
     info: {
       bg: 'bg-blue-900/20',
@@ -51,6 +53,7 @@ function AlertCard({ alert }: { alert: DashboardAlert }) {
       text: 'text-blue-400',
       icon: 'ℹ️',
       label: 'INFO',
+      glow: '',
     },
   };
 
@@ -60,7 +63,7 @@ function AlertCard({ alert }: { alert: DashboardAlert }) {
 
   return (
     <div
-      className={`${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:border-opacity-70`}
+      className={`${config.bg} ${config.border} ${config.glow} border rounded-lg p-4 transition-all hover:border-opacity-70`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">

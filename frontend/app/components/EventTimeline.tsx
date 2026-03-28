@@ -22,12 +22,12 @@ export default function EventTimeline({ events }: EventTimelineProps) {
   }
 
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden">
+    <div className="bg-slate-900/40 backdrop-blur-md border border-slate-700/50 shadow-xl shadow-black/10 rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-800 bg-slate-800/30">
-        <h3 className="text-white font-bold text-sm">Recent Events</h3>
-        <p className="text-slate-500 text-xs mt-0.5">
-          Live event stream from monitored rooms
+      <div className="px-4 py-3 border-b border-slate-700/50 bg-slate-800/30">
+        <h3 className="text-white font-bold text-sm tracking-tight">Recent Events</h3>
+        <p className="text-slate-500 text-[10px] mt-0.5 uppercase tracking-wider">
+          Live event stream
         </p>
       </div>
 
@@ -91,18 +91,18 @@ function EventItem({ event, isLast }: { event: EventTimelineItem; isLast: boolea
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm leading-relaxed">
+              <p className="text-white text-sm leading-relaxed font-medium">
                 {event.message}
               </p>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-slate-500 text-xs">{event.room_id}</span>
+                <span className="text-slate-500 text-[10px] font-semibold uppercase tracking-wider">{event.room_id}</span>
                 <span className="text-slate-600 text-xs">·</span>
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-500 text-xs tabular-nums">
                   {event.people_count} {event.people_count === 1 ? 'person' : 'people'}
                 </span>
               </div>
             </div>
-            <span className="text-slate-500 text-xs whitespace-nowrap" suppressHydrationWarning>
+            <span className="text-slate-500 text-[10px] whitespace-nowrap font-mono tabular-nums" suppressHydrationWarning>
               {timeStr}
             </span>
           </div>

@@ -112,11 +112,11 @@ function MetricCard({ title, value, unit, icon, color, subtitle }: MetricCardPro
 
   return (
     <div
-      className={`${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:scale-[1.02]`}
+      className={`${config.bg} ${config.border} border rounded-xl p-5 transition-all hover:scale-[1.02] backdrop-blur-md shadow-lg shadow-black/10`}
     >
       <div className="flex items-start justify-between mb-3">
         <div>
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">
             {title}
           </p>
         </div>
@@ -127,12 +127,12 @@ function MetricCard({ title, value, unit, icon, color, subtitle }: MetricCardPro
 
       <div className="mb-2">
         <div className="flex items-baseline gap-2">
-          <span className={`${config.text} text-3xl font-bold`}>{value}</span>
-          <span className="text-slate-500 text-sm">{unit}</span>
+          <span className={`${config.text} text-3xl font-black tabular-nums tracking-tight`}>{value}</span>
+          <span className="text-slate-500 text-xs font-semibold uppercase tracking-wide">{unit}</span>
         </div>
       </div>
 
-      <p className="text-slate-500 text-xs">{subtitle}</p>
+      <p className="text-slate-500 text-[11px]">{subtitle}</p>
     </div>
   );
 }
