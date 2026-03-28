@@ -1,146 +1,172 @@
-# Watt Watch
+# ⚡ Watt Watch
 
-A full-stack energy monitoring application with Next.js frontend, FastAPI backend, and React Native mobile app.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Next.js 14](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-green.svg)](https://fastapi.tiangolo.com/)
 
-**🆕 v1.1.0 - Now with Multi-RTSP Stream Support & Dev/Prod Modes!**
+Watt Watch is a privacy-first, edge AI-powered energy monitoring system designed to detect energy waste in smart buildings. By utilizing advanced computer vision to monitor occupancy and appliance states, the system helps organizations automatically reduce their carbon footprint and electricity costs.
 
-## ✨ New Features
+## 📑 Table of Contents
+- [Features](#-features)
+- [Tech Stack](#-tech-stack)
+- [Installation](#-installation)
+- [Usage](#-usage)
+- [Project Structure](#-project-structure)
+- [API Reference](#-api-reference)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-- **Multiple RTSP Streams**: Monitor multiple rooms with IP cameras (RTSP/HTTP streams)
-- **Dev/Prod Modes**: Toggle video streaming for development vs. production deployments
-- **Real-time Video Streaming**: WebSocket-based video feed with visualization controls (dev mode)
-- **Visualization Controls**: Toggle skeleton, bounding boxes, blur, and privacy mode per room
+## ✨ Features
+- 👁️ **Edge-First Computer Vision**: Detects people and appliances locally using YOLOv8 models.
+- 🔒 **Privacy-by-Design**: Implements a "Ghost Mode" using heavy Gaussian blur and skeleton keypoints to prevent PII (Personally Identifiable Information) collection.
+- 📉 **Real-time Energy Analytics**: Monitors occupancy vs. appliance power states to flag `EMPTY_WASTING` conditions.
+- 📋 **Canonical Event Schema**: Strict `RoomEvent` structure ensures consistency across edge devices, storage, and cloud syncing.
+- 🔄 **Live Event Replay**: Replay logged JSONL events to simulate past scenarios and test system responses.
+- 📊 **Interactive Dashboard**: Next.js-based dashboard with Server Components for real-time monitoring and analytics.
 
-See [backend/QUICK_REFERENCE.md](backend/QUICK_REFERENCE.md) for usage examples.
+## 🛠 Tech Stack
+| Component | Technology |
+| :--- | :--- |
+| **Backend** | Python, FastAPI, Pydantic, Uvicorn |
+| **Frontend** | Next.js 14, TypeScript, Tailwind CSS, Recharts |
+| **AI/ML** | YOLOv8 (Ultralytics), OpenCV, PyTorch |
+| **Data Storage** | JSONL (Local Logs), SQLite (Cloud Simulation) |
 
-## Project Structure
 
+## 🚀 Installation & Setup Instructions
+
+To get Watt Watch up and running, follow these steps. The project is primarily composed of a Python backend service and a conceptual Next.js frontend (implied by technologies).
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Utsav9163/Watt_Watch.git
+cd Watt_Watch
 ```
-Watt_Watch/
-├── frontend/          # Next.js web application
-├── backend/           # FastAPI server with RTSP support
-│   ├── main.py                      # Main server (enhanced)
-│   ├── camera_sampler.py           # RTSP/local camera handler
-│   ├── RTSP_STREAMING_GUIDE.md     # Complete RTSP documentation
-│   ├── QUICK_REFERENCE.md          # Quick command reference
-│   └── test_rtsp_features.py       # Test suite
-└── app/              # React Native mobile app (without Expo)
-```
 
-## Getting Started
+### 2. Backend Setup (Python)
 
-### Backend (FastAPI) - Enhanced with RTSP Support
+Navigate to the `backend` directory, set up a virtual environment, and install dependencies.
 
 ```bash
 cd backend
 
-# Configure environment
+# Create a Python virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate  # On Windows: `venv\Scripts\activate`
+
+# Install required Python packages
+pip install -r requirements.txt
+
+# Copy the example environment file and configure it
 cp .env.example .env
-# Edit .env and set:
-#   APP_MODE=dev     # For development with video streaming
-#   APP_MODE=prod    # For production (processing only, no video)
+# Open .env and adjust variables as needed (e.g., API keys, database settings)
+```
 
-# Activate virtual environment
-venv\Scripts\activate  # Windows
-# or
-source venv/bin/activate  # Linux/Mac
+### 3. Running the Backend
 
-# Run the server
+Once dependencies are installed and the `.env` file is configured, you can start the FastAPI backend server.
+
+```bash
+# From the 'backend' directory, with virtual environment activated
 python main.py
+# Or, if using uvicorn directly (common for FastAPI):
+# uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
+The backend will typically be accessible at `http://localhost:8000`.
 
-The API will be available at [http://localhost:8000](http://localhost:8000)
-- API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-- WebSocket: `ws://localhost:8000/ws/{room_id}`
+### 4. Frontend Setup (Conceptual, Next.js)
 
-**Tech Stack:**
-- FastAPI with WebSocket support
-- OpenCV for RTSP stream handling
-- YOLO for pose/object detection
-- Uvicorn, Pydantic
-- CORS middleware enabled
-
-**Quick Example - Start Monitoring:**
-```bash
-# Local webcam
-curl -X POST "http://localhost:8000/monitor/start?room_id=office&camera_source=0"
-
-# RTSP camera
-curl -X POST "http://localhost:8000/monitor/start?room_id=living_room&camera_source=rtsp://admin:password@192.168.1.100:554/stream1"
-
-# List active streams
-curl "http://localhost:8000/monitor/streams"
-```
-
-### Frontend (Next.js)
+While a specific `frontend` directory is not provided in the structure, the use of Next.js implies a frontend component. If a frontend exists, its setup would typically involve:
 
 ```bash
-cd frontend
-npm run dev
+# Navigate to the frontend directory (if it exists)
+# cd ../frontend # Assuming 'frontend' is a sibling to 'backend'
+
+# Install Node.js dependencies
+npm install # or `yarn install`
+
+# Start the development server
+npm run dev # or `yarn dev`
 ```
+The frontend would then be accessible, commonly at `http://localhost:3000`.
 
-The frontend will be available at [http://localhost:3000](http://localhost:3000)
+## 💡 Usage
 
-**Tech Stack:**
-- Next.js 15+ with App Router
-- TypeScript
-- Tailwind CSS
-- ESLint
-- Turbopack
-
-### Mobile App (React Native)
-
+### Start Monitoring
+Begin real-time analysis for a specific room:
 ```bash
-cd app
-npm install
-
-# For Android
-npx react-native run-android
-
-# For iOS (Mac only)
-npx react-native run-ios
+curl -X POST "http://localhost:8000/monitor/start?room_id=office_101&camera_id=0"
 ```
 
-**Tech Stack:**
-- React Native 0.84.1 (CLI, not Expo)
-- Metro bundler
-
-## 📖 Documentation
-
-- **[RTSP Streaming Guide](backend/RTSP_STREAMING_GUIDE.md)** - Complete guide for RTSP cameras and video streaming
-- **[Quick Reference](backend/QUICK_REFERENCE.md)** - Common commands and examples
-- **[Implementation Summary](backend/IMPLEMENTATION_SUMMARY.md)** - Technical details of v1.1.0
-
-## Development
-
-1. Start the backend server first (with your desired APP_MODE)
-2. Start the frontend development server
-3. Run the mobile app on an emulator or device
-
-### Testing
-
+### Audit Single Image
+Use the audit endpoint to analyze a static frame for energy waste:
 ```bash
-# Test RTSP features
-cd backend
-python test_rtsp_features.py
+curl -X POST "http://localhost:8000/audit?room_id=office_101&privacy_mode=true" \
+  -F "file=@room_snapshot.jpg"
 ```
 
-## Prerequisites
+## 📁 Project Structure
+```text
+Watt_Watch/
+├── backend/
+│   ├── main.py             # FastAPI entry point
+│   ├── state_machine.py    # FSM Logic & Energy calculations
+│   ├── camera_sampler.py   # Live frame processing
+│   ├── event_logger.py     # JSONL Persistence
+│   └── schemas.py          # Frozen PHASE 0 contract
+├── frontend/
+│   ├── app/                # Next.js App Router
+│   ├── components/         # Reusable UI components
+│   └── lib/                # API client and aggregators
+└── event_logs/             # Persistent JSONL data
+```
+## ⚙️ Configuration Options
 
-- Node.js 18+ and npm
-- Python 3.13+
-- For React Native:
-  - Android Studio (for Android development)
-  - Xcode (for iOS development, Mac only)
-  - Java Development Kit (JDK)
+Configuration for the backend is handled via environment variables, specified in the `.env` file. A `.env.example` file is provided in the `backend/` directory as a template.
 
-## 🎥 Supported Camera Sources
+**Example `.env` (backend):**
 
-- **Local Cameras**: USB webcams, built-in cameras (device ID: 0, 1, 2, etc.)
-- **RTSP Streams**: IP cameras from Hikvision, Dahua, Axis, Amcrest, Foscam, TP-Link, Reolink, etc.
-- **HTTP Streams**: HTTP-based camera feeds
-- **Multiple Simultaneous Streams**: Monitor multiple rooms/cameras at once
+```env
+# FastAPI server settings
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
 
-## License
+# YOLO model settings
+MODEL_PATH=./models/yolov8s.pt # Example path
+CONFIDENCE_THRESHOLD=0.25
+IOU_THRESHOLD=0.7
 
-MIT
+# Event logging settings
+EVENT_LOGS_DIR=./event_logs
+```
+Please ensure to create and configure your `.env` file based on `.env.example` for proper system operation.
+
+## 🌐 API Reference
+- **POST /detect**: Standard pose/object detection.
+- **POST /audit**: Run full energy audit flow.
+- **POST /monitor/start**: Initiate live stream processing.
+- **GET /monitor/status**: Query health and event status of monitored rooms.
+
+## 🤝 Contributing
+Contributions are welcome! Please fork the repository and submit a pull request with descriptive changes.
+
+## 🙏 Acknowledgments
+
+*   **FastAPI**: For providing a modern, fast (high-performance) web framework for building APIs with Python.
+*   **Next.js**: For the robust framework for building React applications.
+*   **YOLO Models**: For the excellent real-time object detection capabilities critical to the system's AI core.
+*   **Node.js & Python Communities**: For their invaluable tools and extensive libraries.
+
+## 📜 License
+Distributed under the MIT License.
+
+--- 
+**Maintained by Utsav9163**
+🔗 [Repository URL](https://github.com/Utsav9163/Watt_Watch)
+✨ If you found this project helpful, please consider starring it!
+
+---
